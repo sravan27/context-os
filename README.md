@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
 
-**Get 2-5x more out of every Claude Code session.**
+**Automatically reduce Claude Code token waste by 27-42%.**
 
-Context OS is a local-first context optimizer for Claude Code. It automatically compresses bloated tool outputs (stack traces, test logs, build output, JSON blobs), injects structured repo context into every session, and preserves continuity across usage limit resets — so you spend tokens on work, not waste.
+Context OS is a local-first context optimizer for Claude Code. It hooks into Bash tool calls to automatically compress test logs, build output, lint results, and stack traces before Claude sees them. It also injects structured repo context into every session and preserves continuity across usage limit resets — so you spend tokens on work, not waste.
 
 ## The problem
 
@@ -21,15 +21,16 @@ added .context-os/ to .gitignore
 done. Claude Code will now start sessions with repo context loaded.
 ```
 
-After init, Context OS works invisibly through Claude Code hooks:
+After init, Context OS works invisibly through four Claude Code hooks:
 
+- **PreToolUse** — intercepts Bash commands (`cargo test`, `npm build`, `cargo clippy`, etc.) and automatically pipes their output through typed reducers. Claude sees compressed output. Exit codes preserved.
 - **SessionStart** — loads handoff notes from the previous session (objective, modified files, decisions, failures, git state)
 - **UserPromptSubmit** — injects compact status (branch, uncommitted files, objective) on every turn, surviving context compaction
 - **Stop** — auto-saves session state with git diff, branch, uncommitted changes for the next session
 
 ### Typed reducers
 
-When you pipe tool output through `context-os pipe`, it auto-detects the content type and compresses it:
+The PreToolUse hook auto-detects content type and compresses tool output before Claude sees it:
 
 | Content type | What it does | Safe-mode reduction |
 |---|---|---|
@@ -100,7 +101,7 @@ That's it. Claude Code picks up the hooks automatically.
 
 Context OS never touches the network. Everything runs locally:
 
-1. **Hooks** inject context at session boundaries and on every user prompt
+1. **PreToolUse hook** wraps Bash commands (`cargo test`, `npm build`, etc.) to pipe output through typed reducers — Claude sees compressed output, exit codes preserved
 2. **Reducers** compress specific content types with type-aware rules (not generic summarization)
 3. **Repo memory** generates a structural map of your codebase for CLAUDE.md
 4. **Session memory** tracks objectives, decisions, and failures across sessions

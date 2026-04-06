@@ -47,6 +47,8 @@ enum Commands {
     Telemetry(TelemetryCommand),
     /// Validate setup and show what Context OS is doing for you
     Doctor(DoctorArgs),
+    /// Handle Claude Code hook events (used internally by hooks)
+    Hook(HookCommand),
 }
 
 #[derive(Args)]
@@ -240,6 +242,18 @@ struct DoctorArgs {
     root: PathBuf,
 }
 
+#[derive(Subcommand)]
+enum HookSubcommand {
+    /// Handle PreToolUse events — wraps Bash commands to reduce output automatically
+    PreToolUse,
+}
+
+#[derive(Args)]
+struct HookCommand {
+    #[command(subcommand)]
+    command: HookSubcommand,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum ModelOption {
     Claude,
@@ -289,6 +303,7 @@ fn main() -> Result<()> {
         Commands::Config(command) => run_config(command),
         Commands::Telemetry(command) => run_telemetry(command),
         Commands::Doctor(args) => run_doctor(args),
+        Commands::Hook(command) => run_hook(command),
     }
 }
 
@@ -367,6 +382,18 @@ fn run_init(args: InitArgs) -> Result<()> {
         let bin = bin_path.display().to_string();
 
         let hooks = serde_json::json!({
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("{bin} hook pre-tool-use"),
+                            "timeout": 2
+                        }
+                    ]
+                }
+            ],
             "SessionStart": [
                 {
                     "matcher": "",
@@ -992,13 +1019,17 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     let settings_path = root.join(".claude").join("settings.local.json");
     if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).unwrap_or_default();
+        let has_pre_tool = content.contains("PreToolUse");
         let has_session_start = content.contains("SessionStart");
         let has_prompt_submit = content.contains("UserPromptSubmit");
         let has_stop = content.contains("Stop");
-        if has_session_start && has_prompt_submit && has_stop {
-            println!("  \u{2713} Claude Code hooks installed (SessionStart, UserPromptSubmit, Stop)");
+        if has_pre_tool && has_session_start && has_prompt_submit && has_stop {
+            println!("  \u{2713} Claude Code hooks installed (PreToolUse, SessionStart, UserPromptSubmit, Stop)");
         } else {
             let mut missing = Vec::new();
+            if !has_pre_tool {
+                missing.push("PreToolUse");
+            }
             if !has_session_start {
                 missing.push("SessionStart");
             }
@@ -1197,6 +1228,106 @@ test result: FAILED. 11 passed; 1 failed; 0 ignored";
         println!("\n  Status: needs setup (run `context-os init`)\n");
     }
 
+    Ok(())
+}
+
+fn run_hook(command: HookCommand) -> Result<()> {
+    match command.command {
+        HookSubcommand::PreToolUse => run_hook_pre_tool_use(),
+    }
+}
+
+/// Patterns that produce output worth reducing.
+const REDUCIBLE_PREFIXES: &[&str] = &[
+    "cargo test",
+    "cargo build",
+    "cargo clippy",
+    "cargo check",
+    "npm test",
+    "npm run test",
+    "npm run build",
+    "pnpm test",
+    "pnpm run test",
+    "pnpm run build",
+    "yarn test",
+    "yarn build",
+    "pytest",
+    "python -m pytest",
+    "python3 -m pytest",
+    "go test",
+    "go build",
+    "make test",
+    "make build",
+    "make check",
+    "npx tsc",
+    "npx eslint",
+    "eslint",
+    "gradle build",
+    "gradle test",
+    "mvn test",
+    "mvn compile",
+];
+
+fn should_wrap_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    // Skip if already piped through context-os
+    if trimmed.contains("context-os") {
+        return false;
+    }
+    // Match against known reducible command patterns
+    for prefix in REDUCIBLE_PREFIXES {
+        if trimmed.starts_with(prefix) {
+            return true;
+        }
+    }
+    false
+}
+
+fn run_hook_pre_tool_use() -> Result<()> {
+    // Read the hook event from stdin
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("failed to read hook event from stdin")?;
+
+    // Parse the hook event
+    let event: serde_json::Value =
+        serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+
+    // Extract the tool input command
+    let tool_input = event.get("tool_input").unwrap_or(&serde_json::Value::Null);
+    let command = tool_input
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if command.is_empty() || !should_wrap_command(command) {
+        // Don't modify — output nothing so the hook is a no-op
+        return Ok(());
+    }
+
+    // Find our own binary path
+    let bin_path = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("context-os"));
+    let bin = bin_path.display().to_string();
+
+    // Wrap the command to pipe output through context-os pipe.
+    // Preserve the original exit code so Claude sees test failures correctly.
+    // Use $() to capture output, then pipe through reducer.
+    let wrapped = format!(
+        r#"_co_rc=0; _co_out=$({command} 2>&1) || _co_rc=$?; printf '%s\n' "$_co_out" | "{bin}" pipe; exit "$_co_rc""#
+    );
+
+    // Output the PreToolUse response
+    let response = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "updatedInput": {
+                "command": wrapped
+            }
+        }
+    });
+    println!("{}", serde_json::to_string(&response)?);
     Ok(())
 }
 
