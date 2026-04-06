@@ -1,0 +1,66 @@
+{
+  "benchmark": "safe_mode",
+  "generated_at": "2026-04-06T16:58:01.611669+00:00",
+  "dataset": "python/evals/datasets/safe_mode_cases.json",
+  "summary": {
+    "total_cases": 5,
+    "passed_cases": 5,
+    "failed_cases": [],
+    "reducer_case_count": 4,
+    "prompt_case_count": 1,
+    "average_reducer_recall": 1.0,
+    "average_reduction_pct": 26.13263445830365,
+    "average_prompt_finding_recall": 1.0
+  },
+  "reducers": [
+    {
+      "name": "stack_trace_safe",
+      "protected_string_recall": 1.0,
+      "reduction_pct": 42.281879194630875,
+      "before_tokens": 149,
+      "after_tokens": 86,
+      "transformed": true,
+      "passed": true
+    },
+    {
+      "name": "test_log_safe",
+      "protected_string_recall": 1.0,
+      "reduction_pct": 36.19631901840491,
+      "before_tokens": 163,
+      "after_tokens": 104,
+      "transformed": true,
+      "passed": true
+    },
+    {
+      "name": "json_safe",
+      "protected_string_recall": 1.0,
+      "reduction_pct": 13.06532663316583,
+      "before_tokens": 199,
+      "after_tokens": 173,
+      "transformed": true,
+      "passed": true
+    },
+    {
+      "name": "config_safe",
+      "protected_string_recall": 1.0,
+      "reduction_pct": 12.987012987012985,
+      "before_tokens": 77,
+      "after_tokens": 67,
+      "transformed": true,
+      "passed": true
+    }
+  ],
+  "prompt_linter": [
+    {
+      "name": "prompt_lint_long_prompt",
+      "finding_recall": 1.0,
+      "finding_count": 4,
+      "passed": true
+    }
+  ],
+  "gates": {
+    "safe_mode_protected_string_recall": "1.0 required",
+    "safe_mode_prompt_finding_recall": "1.0 required for expected benchmark findings",
+    "transformed_safe_mode_cases": "after_tokens must be <= before_tokens"
+  }
+}

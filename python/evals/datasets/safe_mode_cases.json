@@ -1,0 +1,57 @@
+[
+  {
+    "name": "stack_trace_safe",
+    "type": "reducer",
+    "reducer_kind": "stack-trace",
+    "input": "tests/fixtures/stack-trace-node.txt",
+    "protected_strings": [
+      "TypeError",
+      "/workspace/src/server.ts:118:19",
+      "node:internal/modules/esm/loader:337:24"
+    ]
+  },
+  {
+    "name": "test_log_safe",
+    "type": "reducer",
+    "reducer_kind": "test-log",
+    "input": "tests/fixtures/test-log-jest.txt",
+    "protected_strings": [
+      "$ pnpm test --filter api",
+      "FAIL tests/api/users.spec.ts",
+      "AssertionError"
+    ]
+  },
+  {
+    "name": "json_safe",
+    "type": "reducer",
+    "reducer_kind": "json",
+    "input": "tests/fixtures/large-response.json",
+    "protected_strings": [
+      "req_9HX",
+      "v2026.04.1",
+      "/workspace/apps/api/src/routes/users.ts"
+    ]
+  },
+  {
+    "name": "config_safe",
+    "type": "reducer",
+    "reducer_kind": "config",
+    "input": "tests/fixtures/service-config.toml",
+    "protected_strings": [
+      "service_version = \"v1.14.2\"",
+      "listen_addr = \"127.0.0.1:8080\"",
+      "/workspace/apps/api"
+    ]
+  },
+  {
+    "name": "prompt_lint_long_prompt",
+    "type": "prompt_lint",
+    "input": "tests/fixtures/long-prompt.txt",
+    "expected_findings": [
+      "redundant_constraints",
+      "overbroad_scope",
+      "missing_file_scope",
+      "missing_acceptance_criteria"
+    ]
+  }
+]

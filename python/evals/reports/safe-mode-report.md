@@ -1,0 +1,26 @@
+# Safe Mode Benchmark Report
+
+- Generated at: `2026-04-06T16:58:01.611669+00:00`
+- Dataset: `python/evals/datasets/safe_mode_cases.json`
+- Passed cases: `5/5`
+
+## Reducer Results
+
+| Case | Recall | Reduction % | Before | After | Passed |
+| --- | ---: | ---: | ---: | ---: | --- |
+| stack_trace_safe | 1.00 | 42.28 | 149 | 86 | yes |
+| test_log_safe | 1.00 | 36.20 | 163 | 104 | yes |
+| json_safe | 1.00 | 13.07 | 199 | 173 | yes |
+| config_safe | 1.00 | 12.99 | 77 | 67 | yes |
+
+## Prompt Linter Results
+
+| Case | Finding Recall | Findings | Passed |
+| --- | ---: | ---: | --- |
+| prompt_lint_long_prompt | 1.00 | 4 | yes |
+
+## Gates
+
+- Safe reducer protected-string recall: 1.0 required
+- Prompt-linter finding recall: 1.0 required for expected benchmark findings
+- Safe transformed reducer token behavior: after_tokens must be <= before_tokens

@@ -1,0 +1,15 @@
+/target
+/node_modules
+/dist
+/.DS_Store
+/coverage
+/apps/dashboard/node_modules
+/apps/dashboard/dist
+/.context-os.db
+/python/.venv
+/python/**/__pycache__
+/python/**/.pytest_cache
+/examples/**/.DS_Store
+
+# Context OS local state
+.context-os/

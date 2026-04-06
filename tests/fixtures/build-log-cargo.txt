@@ -1,0 +1,71 @@
+$ cargo build --release
+   Compiling proc-macro2 v1.0.78
+   Compiling unicode-ident v1.0.12
+   Compiling quote v1.0.35
+   Compiling syn v2.0.48
+   Compiling serde_derive v1.0.196
+   Compiling serde v1.0.196
+   Compiling libc v0.2.153
+   Compiling cfg-if v1.0.0
+   Compiling getrandom v0.2.12
+   Compiling rand_core v0.6.4
+   Compiling rand v0.8.5
+   Compiling tokio v1.36.0
+   Compiling hyper v1.2.0
+   Compiling axum v0.7.4
+   Compiling regex-syntax v0.8.2
+   Compiling regex-automata v0.4.5
+   Compiling regex v1.10.3
+   Compiling serde_json v1.0.113
+   Compiling tower v0.4.13
+   Compiling bytes v1.5.0
+   Downloading crates ...
+   Downloading tracing v0.1.40
+   Downloading tracing-core v0.1.32
+   Downloading tracing-subscriber v0.3.18
+   Downloading tower-http v0.5.1
+   Downloading anyhow v1.0.79
+warning[unused_imports]: unused import: `std::collections::HashMap`
+ --> src/handlers/auth.rs:3:5
+  |
+3 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning[dead_code]: function `legacy_hash` is never used
+  --> src/utils/crypto.rs:47:8
+   |
+47 | pub fn legacy_hash(input: &str) -> String {
+   |        ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+   Compiling my-app v0.1.0 (/workspace/my-app)
+error[E0308]: mismatched types
+  --> src/routes/api.rs:82:20
+   |
+82 |     let result: u32 = compute_score();
+   |                 ---   ^^^^^^^^^^^^^^^ expected `u32`, found `i64`
+   |                 |
+   |                 expected due to this
+   |
+help: you can convert an `i64` to a `u32` and panic if the converted value doesn't fit
+   |
+82 |     let result: u32 = compute_score().try_into().unwrap();
+   |                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+error[E0599]: no method named `send_async` found for struct `Sender` in the current scope
+   --> src/workers/notify.rs:31:14
+    |
+31  |         self.tx.send_async(msg).await?;
+    |                 ^^^^^^^^^^ method not found in `Sender<Message>`
+    |
+help: there is a method `send` with a similar name
+    |
+31  |         self.tx.send(msg).await?;
+    |                 ~~~~
+
+error: aborting due to 2 previous errors; 2 warnings emitted
+
+For more information about an error, try `rustc --explain E0308`.

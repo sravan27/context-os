@@ -1,0 +1,32 @@
+{
+  "query": "SELECT * FROM events WHERE severity = 'error'",
+  "total": 20,
+  "page": 1,
+  "results": [
+    {"id": "evt_001", "timestamp": "2026-04-06T10:00:00Z", "severity": "error", "message": "Connection timeout to database primary", "service": "api-gateway", "trace_id": "tr_abc123"},
+    {"id": "evt_002", "timestamp": "2026-04-06T10:00:01Z", "severity": "error", "message": "Connection timeout to database primary", "service": "api-gateway", "trace_id": "tr_abc124"},
+    {"id": "evt_003", "timestamp": "2026-04-06T10:00:02Z", "severity": "error", "message": "Connection timeout to database primary", "service": "api-gateway", "trace_id": "tr_abc125"},
+    {"id": "evt_004", "timestamp": "2026-04-06T10:00:03Z", "severity": "error", "message": "Connection timeout to database primary", "service": "api-gateway", "trace_id": "tr_abc126"},
+    {"id": "evt_005", "timestamp": "2026-04-06T10:00:04Z", "severity": "error", "message": "Connection timeout to database primary", "service": "api-gateway", "trace_id": "tr_abc127"},
+    {"id": "evt_006", "timestamp": "2026-04-06T10:01:00Z", "severity": "error", "message": "Redis cluster failover in progress", "service": "cache-layer", "trace_id": "tr_def001"},
+    {"id": "evt_007", "timestamp": "2026-04-06T10:01:01Z", "severity": "error", "message": "Redis cluster failover in progress", "service": "cache-layer", "trace_id": "tr_def002"},
+    {"id": "evt_008", "timestamp": "2026-04-06T10:01:02Z", "severity": "error", "message": "Redis cluster failover in progress", "service": "cache-layer", "trace_id": "tr_def003"},
+    {"id": "evt_009", "timestamp": "2026-04-06T10:01:03Z", "severity": "error", "message": "Redis cluster failover in progress", "service": "cache-layer", "trace_id": "tr_def004"},
+    {"id": "evt_010", "timestamp": "2026-04-06T10:01:04Z", "severity": "error", "message": "Redis cluster failover in progress", "service": "cache-layer", "trace_id": "tr_def005"},
+    {"id": "evt_011", "timestamp": "2026-04-06T10:02:00Z", "severity": "error", "message": "Auth token validation failed: expired", "service": "auth-service", "trace_id": "tr_ghi001"},
+    {"id": "evt_012", "timestamp": "2026-04-06T10:02:01Z", "severity": "error", "message": "Auth token validation failed: expired", "service": "auth-service", "trace_id": "tr_ghi002"},
+    {"id": "evt_013", "timestamp": "2026-04-06T10:02:02Z", "severity": "error", "message": "Auth token validation failed: expired", "service": "auth-service", "trace_id": "tr_ghi003"},
+    {"id": "evt_014", "timestamp": "2026-04-06T10:03:00Z", "severity": "error", "message": "Disk usage exceeded 95% threshold on /data/logs", "service": "monitoring", "trace_id": "tr_jkl001"},
+    {"id": "evt_015", "timestamp": "2026-04-06T10:03:00Z", "severity": "error", "message": "Disk usage exceeded 95% threshold on /data/logs", "service": "monitoring", "trace_id": "tr_jkl002"},
+    {"id": "evt_016", "timestamp": "2026-04-06T10:04:00Z", "severity": "error", "message": "gRPC deadline exceeded calling user-service.GetProfile", "service": "api-gateway", "trace_id": "tr_mno001"},
+    {"id": "evt_017", "timestamp": "2026-04-06T10:04:01Z", "severity": "error", "message": "gRPC deadline exceeded calling user-service.GetProfile", "service": "api-gateway", "trace_id": "tr_mno002"},
+    {"id": "evt_018", "timestamp": "2026-04-06T10:04:02Z", "severity": "error", "message": "gRPC deadline exceeded calling user-service.GetProfile", "service": "api-gateway", "trace_id": "tr_mno003"},
+    {"id": "evt_019", "timestamp": "2026-04-06T10:04:03Z", "severity": "error", "message": "gRPC deadline exceeded calling user-service.GetProfile", "service": "api-gateway", "trace_id": "tr_mno004"},
+    {"id": "evt_020", "timestamp": "2026-04-06T10:05:00Z", "severity": "error", "message": "OOM killed: heap allocation failed at 4.2GB", "service": "batch-processor", "trace_id": "tr_pqr001"}
+  ],
+  "metadata": {
+    "query_time_ms": 142,
+    "database": "events-primary-us-east-1",
+    "version": "v3.8.1"
+  }
+}

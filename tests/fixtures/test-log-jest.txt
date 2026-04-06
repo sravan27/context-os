@@ -1,0 +1,30 @@
+$ pnpm test --filter api
+
+PASS tests/ui/header.spec.ts
+PASS tests/ui/footer.spec.ts
+PASS tests/api/health.spec.ts
+PASS tests/api/projects.spec.ts
+PASS tests/api/teams.spec.ts
+PASS tests/api/reports.spec.ts
+PASS tests/api/billing.spec.ts
+PASS tests/api/exports.spec.ts
+PASS tests/api/notifications.spec.ts
+PASS tests/api/search.spec.ts
+PASS tests/api/audit.spec.ts
+FAIL tests/api/users.spec.ts
+  users endpoint
+    returns 500 when repository returns undefined
+
+  AssertionError: expected 200 to equal 500
+  Expected: 500
+  Received: 200
+      at Object.<anonymous> (tests/api/users.spec.ts:48:27)
+
+PASS tests/api/auth.spec.ts
+PASS tests/api/invoices.spec.ts
+.....
+Test Suites: 1 failed, 13 passed, 14 total
+Tests:       1 failed, 54 passed, 55 total
+Snapshots:   0 total
+Time:        4.231 s
+Ran all test suites.

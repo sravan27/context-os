@@ -1,0 +1,50 @@
+{
+  "mode": "safe",
+  "reducers": {
+    "stack_trace": {
+      "enabled": true,
+      "mode": "safe",
+      "max_input_tokens": 1600
+    },
+    "test_log": {
+      "enabled": true,
+      "mode": "safe"
+    },
+    "json": {
+      "enabled": true,
+      "mode": "safe"
+    },
+    "config": {
+      "enabled": true,
+      "mode": "safe"
+    }
+  },
+  "protections": {
+    "preserve_code_blocks": true,
+    "preserve_commands": true,
+    "preserve_file_paths": true,
+    "preserve_versions": true,
+    "preserve_identifiers": true,
+    "protected_literals": [
+      "never rewrite migrations",
+      "req_9HX"
+    ]
+  },
+  "pinned_constraints": [
+    "safe mode by default",
+    "never rewrite migrations"
+  ],
+  "include_paths": [
+    "src",
+    "tests"
+  ],
+  "ignore_paths": [
+    "dist",
+    "coverage"
+  ],
+  "telemetry": {
+    "enabled": true,
+    "database_path": "~/.context-os/context-os.db",
+    "retain_days": 90
+  }
+}

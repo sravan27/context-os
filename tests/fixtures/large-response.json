@@ -1,0 +1,37 @@
+{
+  "requestId": "req_9HX",
+  "apiVersion": "v2026.04.1",
+  "status": "partial_failure",
+  "repoRoot": "/workspace/apps/api",
+  "items": [
+    {
+      "id": "evt_1001",
+      "path": "/workspace/apps/api/src/routes/users.ts",
+      "message": "fetchUserById returned null",
+      "severity": "warning"
+    },
+    {
+      "id": "evt_1002",
+      "path": "/workspace/apps/api/src/routes/users.ts",
+      "message": "fallback cache miss",
+      "severity": "warning"
+    },
+    {
+      "id": "evt_1003",
+      "path": "/workspace/apps/api/src/services/cache.ts",
+      "message": "cache warmup skipped",
+      "severity": "info"
+    },
+    {
+      "id": "evt_1004",
+      "path": "/workspace/apps/api/src/services/cache.ts",
+      "message": "cache warmup skipped",
+      "severity": "info"
+    }
+  ],
+  "metadata": {
+    "service": "context-os-fixture",
+    "retryable": false,
+    "notes": "This is a deliberately verbose JSON payload intended to exercise safe-mode summarization without dropping protected paths or versions."
+  }
+}

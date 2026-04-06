@@ -1,0 +1,6 @@
+{
+  "name": "@context-os/plugin-claude",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module"
+}

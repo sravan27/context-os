@@ -1,0 +1,18 @@
+[package]
+name = "proxy-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+prompt-linter = { path = "../prompt-linter" }
+reducer-engine = { path = "../reducer-engine" }
+session-memory = { path = "../session-memory" }
+telemetry = { path = "../telemetry" }
+token-estimator = { path = "../token-estimator" }
+
+[dev-dependencies]
+tempfile.workspace = true

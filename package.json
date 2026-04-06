@@ -1,0 +1,12 @@
+{
+  "name": "context-os",
+  "private": true,
+  "workspaces": [
+    "apps/dashboard",
+    "apps/plugin-claude"
+  ],
+  "scripts": {
+    "dashboard:dev": "npm --workspace apps/dashboard run dev",
+    "dashboard:build": "npm --workspace apps/dashboard run build"
+  }
+}

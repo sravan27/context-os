@@ -1,0 +1,10 @@
+[package]
+name = "prompt-linter"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true
+token-estimator = { path = "../token-estimator" }

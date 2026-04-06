@@ -1,0 +1,16 @@
+# Sample config for reducer testing
+# This comment is low signal and should be removed.
+
+[service]
+name = "api"
+service_version = "v1.14.2"
+listen_addr = "127.0.0.1:8080"
+
+# TODO: keep this warning for operators
+[limits]
+max_connections = 256
+request_timeout_ms = 12000
+
+[paths]
+repo_root = "/workspace/apps/api"
+log_config = "./config/logging.yaml"

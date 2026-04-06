@@ -1,0 +1,7 @@
+TypeError: Cannot read properties of undefined (reading 'name')
+    at getUserDisplayName (/workspace/src/server.ts:118:19)
+    at processUser (/workspace/src/server.ts:182:11)
+    at async /workspace/src/routes/users.ts:44:7
+    at async /workspace/node_modules/router/runtime.js:21:3
+    at async /workspace/node_modules/router/runtime.js:21:3
+    at async ModuleLoader.import (node:internal/modules/esm/loader:337:24)

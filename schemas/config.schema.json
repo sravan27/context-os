@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-os.local/schemas/config.schema.json",
+  "title": "Context OS Config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["safe", "balanced", "aggressive"],
+      "default": "safe"
+    },
+    "reducers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stack_trace": { "$ref": "#/$defs/reducerPolicy" },
+        "test_log": { "$ref": "#/$defs/reducerPolicy" },
+        "build_log": { "$ref": "#/$defs/reducerPolicy" },
+        "lint_output": { "$ref": "#/$defs/reducerPolicy" },
+        "json": { "$ref": "#/$defs/reducerPolicy" },
+        "config": { "$ref": "#/$defs/reducerPolicy" },
+        "markdown": { "$ref": "#/$defs/reducerPolicy" },
+        "csv": { "$ref": "#/$defs/reducerPolicy" },
+        "nl_instruction": { "$ref": "#/$defs/reducerPolicy" },
+        "conservative_code_context": { "$ref": "#/$defs/reducerPolicy" }
+      }
+    },
+    "protections": { "$ref": "#/$defs/protections" },
+    "pinned_constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "include_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "ignore_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "repo_memory": { "$ref": "#/$defs/repoMemory" },
+    "response_shaping": { "$ref": "#/$defs/responseShaping" },
+    "telemetry": { "$ref": "#/$defs/telemetry" },
+    "dashboard": { "$ref": "#/$defs/dashboard" },
+    "experimental": { "$ref": "#/$defs/experimental" }
+  },
+  "$defs": {
+    "reducerPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "mode": {
+          "type": "string",
+          "enum": ["safe", "balanced", "aggressive"],
+          "default": "safe"
+        },
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "protections": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preserve_code_blocks": { "type": "boolean", "default": true },
+        "preserve_commands": { "type": "boolean", "default": true },
+        "preserve_file_paths": { "type": "boolean", "default": true },
+        "preserve_versions": { "type": "boolean", "default": true },
+        "preserve_identifiers": { "type": "boolean", "default": true },
+        "protected_literals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "repoMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "artifact_dir": { "type": "string", "default": ".context-os/repo-memory" },
+        "incremental": { "type": "boolean", "default": true }
+      }
+    },
+    "responseShaping": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["off", "concise", "action-first"],
+          "default": "off"
+        },
+        "enabled": { "type": "boolean", "default": false }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "database_path": { "type": "string", "default": "~/.context-os/context-os.db" },
+        "retain_days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 90
+        }
+      }
+    },
+    "dashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string", "default": "127.0.0.1" },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 4319
+        },
+        "open_browser": { "type": "boolean", "default": false }
+      }
+    },
+    "experimental": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "balanced_json_arrays": { "type": "boolean", "default": false },
+        "aggressive_response_shaper": { "type": "boolean", "default": false }
+      }
+    }
+  }
+}

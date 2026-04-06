@@ -1,0 +1,13 @@
+$ pnpm test --filter api
+
+PASS tests/ui/header.spec.ts
+PASS tests/ui/footer.spec.ts
+FAIL tests/api/users.spec.ts
+  AssertionError: expected 200 to equal 500
+  Expected: 500
+  Received: 200
+      at Object.<anonymous> (tests/api/users.spec.ts:48:27)
+.....
+Test Suites: 1 failed, 2 passed, 3 total
+Tests:       1 failed, 8 passed, 9 total
+Ran all test suites.

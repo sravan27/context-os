@@ -1,0 +1,19 @@
+[package]
+name = "context-os"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+config = { path = "../../crates/config" }
+prompt-linter = { path = "../../crates/prompt-linter" }
+proxy-core = { path = "../../crates/proxy-core" }
+reducer-engine = { path = "../../crates/reducer-engine" }
+repo-memory = { path = "../../crates/repo-memory" }
+session-memory = { path = "../../crates/session-memory" }
+telemetry = { path = "../../crates/telemetry" }
+token-estimator = { path = "../../crates/token-estimator" }

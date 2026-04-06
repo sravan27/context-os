@@ -1,0 +1,12 @@
+You are a staff engineer.
+You are a staff engineer.
+Please look through the entire repo and fix the issue.
+Please look through the entire repo and fix the issue.
+Do not silently change behavior.
+Do not silently change behavior.
+This is production-grade work.
+This is production-grade work.
+The project mission is to reduce context waste for AI coding workflows.
+The product thesis is about local context optimization.
+The hard requirements matter.
+Figure out what needs to change and let me know when it is done.

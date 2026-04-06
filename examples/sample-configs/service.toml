@@ -1,0 +1,8 @@
+# Example service config
+[service]
+name = "context-os"
+service_version = "v1.14.2"
+listen_addr = "127.0.0.1:8080"
+
+[paths]
+repo_root = "/workspace/context-os"
