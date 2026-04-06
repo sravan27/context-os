@@ -9,7 +9,7 @@ use token_estimator::{estimate_text, ModelFamily};
 
 pub use reducers::{
     build_log::BuildLogReducer, config::ConfigReducer, json::JsonReducer,
-    stack_trace::StackTraceReducer, test_log::TestLogReducer,
+    lint_output::LintOutputReducer, stack_trace::StackTraceReducer, test_log::TestLogReducer,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,6 +210,7 @@ impl Default for ReducerRegistry {
                 Box::new(StackTraceReducer),
                 Box::new(TestLogReducer),
                 Box::new(BuildLogReducer),
+                Box::new(LintOutputReducer),
                 Box::new(JsonReducer),
                 Box::new(ConfigReducer),
             ],

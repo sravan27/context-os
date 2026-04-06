@@ -1,8 +1,8 @@
 # Safe Mode Benchmark Report
 
-- Generated at: `2026-04-06T16:58:01.611669+00:00`
+- Generated at: `2026-04-06T17:11:13.515880+00:00`
 - Dataset: `python/evals/datasets/safe_mode_cases.json`
-- Passed cases: `5/5`
+- Passed cases: `7/7`
 
 ## Reducer Results
 
@@ -12,6 +12,8 @@
 | test_log_safe | 1.00 | 36.20 | 163 | 104 | yes |
 | json_safe | 1.00 | 13.07 | 199 | 173 | yes |
 | config_safe | 1.00 | 12.99 | 77 | 67 | yes |
+| build_log_safe | 1.00 | 33.04 | 566 | 379 | yes |
+| lint_output_safe | 1.00 | 26.38 | 599 | 441 | yes |
 
 ## Prompt Linter Results
 

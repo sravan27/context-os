@@ -15,7 +15,8 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT"
-repository = "https://example.invalid/context-os"
+repository = "https://github.com/sravan27/context-os"
+homepage = "https://github.com/sravan27/context-os"
 version = "0.1.0"
 
 [workspace.dependencies]

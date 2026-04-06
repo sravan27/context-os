@@ -1,5 +1,10 @@
 [package]
 name = "context-os"
+description = "Local-first context optimizer for Claude Code. Reduces token consumption by 26-42% with typed reducers, session continuity, and repo-aware CLAUDE.md generation."
+keywords = ["claude", "context", "llm", "token", "optimization"]
+categories = ["command-line-utilities", "development-tools"]
+repository.workspace = true
+homepage.workspace = true
 edition.workspace = true
 license.workspace = true
 version.workspace = true

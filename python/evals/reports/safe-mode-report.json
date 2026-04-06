@@ -1,15 +1,15 @@
 {
   "benchmark": "safe_mode",
-  "generated_at": "2026-04-06T16:58:01.611669+00:00",
+  "generated_at": "2026-04-06T17:11:13.515880+00:00",
   "dataset": "python/evals/datasets/safe_mode_cases.json",
   "summary": {
-    "total_cases": 5,
-    "passed_cases": 5,
+    "total_cases": 7,
+    "passed_cases": 7,
     "failed_cases": [],
-    "reducer_case_count": 4,
+    "reducer_case_count": 6,
     "prompt_case_count": 1,
     "average_reducer_recall": 1.0,
-    "average_reduction_pct": 26.13263445830365,
+    "average_reduction_pct": 27.324450430608767,
     "average_prompt_finding_recall": 1.0
   },
   "reducers": [
@@ -46,6 +46,24 @@
       "reduction_pct": 12.987012987012985,
       "before_tokens": 77,
       "after_tokens": 67,
+      "transformed": true,
+      "passed": true
+    },
+    {
+      "name": "build_log_safe",
+      "protected_string_recall": 1.0,
+      "reduction_pct": 33.03886925795053,
+      "before_tokens": 566,
+      "after_tokens": 379,
+      "transformed": true,
+      "passed": true
+    },
+    {
+      "name": "lint_output_safe",
+      "protected_string_recall": 1.0,
+      "reduction_pct": 26.37729549248748,
+      "before_tokens": 599,
+      "after_tokens": 441,
       "transformed": true,
       "passed": true
     }

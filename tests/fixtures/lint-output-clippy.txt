@@ -1,0 +1,76 @@
+$ cargo clippy --all-targets
+    Checking context-os-core v0.3.1
+    Checking context-os-api v0.3.1
+warning[clippy::needless_return]: unneeded `return` statement
+  --> crates/core/src/reducer.rs:45:9
+   |
+45 |         return result;
+   |         ^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return
+   = note: `#[warn(clippy::needless_return)]` on by default
+help: remove `return`
+   |
+45 -         return result;
+45 +         result
+   |
+
+warning[clippy::needless_return]: unneeded `return` statement
+  --> crates/core/src/engine.rs:112:9
+   |
+112|         return self.registry.detect(input);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return
+
+warning[clippy::needless_return]: unneeded `return` statement
+  --> crates/api/src/handlers/reduce.rs:28:9
+   |
+28 |         return Ok(response);
+   |         ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return
+
+warning[clippy::redundant_clone]: redundant clone
+  --> crates/core/src/config.rs:67:30
+   |
+67 |     let settings = base_config.clone();
+   |                                ^^^^^^^^
+   |
+   = note: `#[warn(clippy::redundant_clone)]` on by default
+note: cloned value is neither consumed nor mutated
+  --> crates/core/src/config.rs:67:19
+   |
+67 |     let settings = base_config.clone();
+   |                    ^^^^^^^^^^^^^^^^^^^
+
+warning[clippy::unused_imports]: unused import: `std::fmt::Debug`
+  --> crates/api/src/handlers/health.rs:3:5
+   |
+3  | use std::fmt::Debug;
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(clippy::unused_imports)]` on by default
+
+warning[clippy::unused_imports]: unused import: `tracing::info`
+  --> crates/core/src/telemetry.rs:8:5
+   |
+8  | use tracing::info;
+   |     ^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> crates/core/src/scoring.rs:23:18
+   |
+23 |     let score: f32 = compute_confidence();
+   |                ---   ^^^^^^^^^^^^^^^^^^^^ expected `f32`, found `f64`
+   |                |
+   |                expected due to this
+   |
+help: you can convert an `f64` to an `f32`
+   |
+23 |     let score: f32 = compute_confidence() as f32;
+   |                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+warning: 6 warnings emitted; 1 error emitted
+
+error: could not compile `context-os-core` (lib) due to 1 previous error; 6 warnings emitted

@@ -44,6 +44,30 @@
     ]
   },
   {
+    "name": "build_log_safe",
+    "type": "reducer",
+    "reducer_kind": "build-log",
+    "input": "tests/fixtures/build-log-cargo.txt",
+    "protected_strings": [
+      "$ cargo build --release",
+      "error[E0308]: mismatched types",
+      "src/routes/api.rs:82:20",
+      "error[E0599]: no method named `send_async`",
+      "src/workers/notify.rs:31:14"
+    ]
+  },
+  {
+    "name": "lint_output_safe",
+    "type": "reducer",
+    "reducer_kind": "lint-output",
+    "input": "tests/fixtures/lint-output-clippy.txt",
+    "protected_strings": [
+      "$ cargo clippy --all-targets",
+      "error[E0308]: mismatched types",
+      "crates/core/src/scoring.rs:23:18"
+    ]
+  },
+  {
     "name": "prompt_lint_long_prompt",
     "type": "prompt_lint",
     "input": "tests/fixtures/long-prompt.txt",

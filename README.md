@@ -1,5 +1,7 @@
 # Context OS
 
+[![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
+
 **Get 2-5x more out of every Claude Code session.**
 
 Context OS is a local-first context optimizer for Claude Code. It automatically compresses bloated tool outputs (stack traces, test logs, build output, JSON blobs), injects structured repo context into every session, and preserves continuity across usage limit resets — so you spend tokens on work, not waste.
@@ -31,11 +33,12 @@ When you pipe tool output through `context-os pipe`, it auto-detects the content
 
 | Content type | What it does | Safe-mode reduction |
 |---|---|---|
-| Stack traces | Collapses duplicate frames, keeps root error + file paths | **42%** |
+| Stack traces | Collapses duplicate + internal frames, keeps root error + user code paths | **42%** |
 | Test logs | Collapses passing tests to count, preserves all failures | **36%** |
+| Build logs | Collapses "Compiling..." / "Downloading..." lines, keeps errors/warnings | **33%** |
+| Lint output | Groups duplicate warnings by rule, preserves all errors with context | **26%** |
 | JSON blobs | Deduplicates arrays, samples unique items, compacts nested objects | **13%** |
 | Config files | Strips comments, preserves keys + protected values | **13%** |
-| Build logs | Collapses "Compiling..." lines, keeps errors/warnings | **~40%** |
 
 All reductions are **safe by default**: 100% protected string recall, fail-open on uncertainty, provenance tracking on every transformation.
 
@@ -117,14 +120,16 @@ Benchmarks run as CI gates, not marketing claims:
 ```
 $ python3 python/evals/runners/safe_mode_runner.py
 
-Passed: 5/5
-Average reduction: 26.1%
+Passed: 7/7
+Average reduction: 27.3%
 Protected string recall: 100%
 
 | Case              | Recall | Reduction % | Before | After |
 |-------------------|--------|-------------|--------|-------|
 | stack_trace_safe  | 1.00   | 42.28       | 149    | 86    |
 | test_log_safe     | 1.00   | 36.20       | 163    | 104   |
+| build_log_safe    | 1.00   | 33.04       | 566    | 379   |
+| lint_output_safe  | 1.00   | 26.38       | 599    | 441   |
 | json_safe         | 1.00   | 13.07       | 199    | 173   |
 | config_safe       | 1.00   | 12.99       | 77     | 67    |
 | prompt_lint       | 1.00   | (linter)    | -      | -     |
@@ -173,12 +178,12 @@ Research shows that LLMs [perform worse with longer contexts](https://arxiv.org/
 - Safe mode prioritizes recall over compression — reductions are conservative
 - Repo memory can go stale between `context-os init` runs
 - Session memory compaction is lossy (keeps last 3 turns, 5 failures)
-- Only 5 reducer types shipped (stack traces, test logs, JSON, config, build logs)
+- Only 6 reducer types shipped (stack traces, test logs, build logs, lint output, JSON, config)
 
 ## Development
 
 ```bash
-cargo test                                         # Run all 26+ tests
+cargo test                                         # Run all 30+ tests
 python3 python/evals/runners/safe_mode_runner.py   # Run benchmarks
 ```
 
