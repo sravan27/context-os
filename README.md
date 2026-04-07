@@ -81,21 +81,45 @@ Context OS scans your repo and generates a structured map that Claude reads at s
 - Test file counts (not full listings)
 - Capped at what fits in ~1K tokens
 
-## Setup
+## Install
+
+### Claude Code Plugin (recommended)
+
+```
+/plugin marketplace add sravan27/context-os
+/plugin install context-os@context-os
+```
+
+Hooks register automatically. Run `/context-os:doctor` to verify.
+
+**Prerequisite:** The `context-os` binary must be in your PATH. Install it:
 
 ```bash
-# Build from source
-cargo install --path apps/cli
+# macOS (Apple Silicon)
+curl -L https://github.com/sravan27/context-os/releases/latest/download/context-os-aarch64-apple-darwin -o /usr/local/bin/context-os && chmod +x /usr/local/bin/context-os
 
-# Initialize in your project
+# Linux (x86_64)
+curl -L https://github.com/sravan27/context-os/releases/latest/download/context-os-x86_64-unknown-linux-gnu -o /usr/local/bin/context-os && chmod +x /usr/local/bin/context-os
+
+# From source (any platform with Rust)
+cargo install --git https://github.com/sravan27/context-os --path apps/cli
+```
+
+Then initialize in your project:
+
+```bash
 cd your-project
 context-os init
-
-# Verify everything is wired up
 context-os doctor
 ```
 
-That's it. Claude Code picks up the hooks automatically.
+### Slash commands
+
+| Command | What it does |
+|---|---|
+| `/context-os:doctor` | Validate setup, run quick benchmark |
+| `/context-os:init` | Scan repo, generate CLAUDE.md |
+| `/context-os:stats` | Show branch, uncommitted files, objective |
 
 ## How it works
 
