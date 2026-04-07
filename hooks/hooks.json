@@ -1,0 +1,38 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "context-os hook pre-tool-use",
+          "timeout": 2
+        }
+      ]
+    }
+  ],
+  "SessionStart": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cat .context-os/handoff.md 2>/dev/null || true",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "context-os handoff 2>/dev/null || true",
+          "timeout": 10
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "context-os",
+  "description": "Automatic context optimization — compresses tool output 27-42%, adds session continuity across usage limits",
+  "version": "0.2.0",
+  "author": {
+    "name": "sravan27",
+    "url": "https://github.com/sravan27"
+  },
+  "homepage": "https://github.com/sravan27/context-os",
+  "license": "MIT",
+  "keywords": ["context", "optimization", "tokens", "reducer", "session"],
+  "platforms": ["claude-code"]
+}

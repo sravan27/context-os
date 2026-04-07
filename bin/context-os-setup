@@ -1,0 +1,22 @@
+#!/bin/bash
+# context-os-setup: Check if context-os is installed, help install if not
+set -e
+
+if command -v context-os &>/dev/null; then
+    echo "context-os is installed: $(context-os --version 2>/dev/null || echo 'unknown version')"
+    exit 0
+fi
+
+echo "context-os binary not found."
+echo ""
+echo "Install options:"
+echo ""
+echo "  # From source (requires Rust):"
+echo "  cargo install --git https://github.com/sravan27/context-os --path apps/cli"
+echo ""
+echo "  # From release binary (macOS arm64):"
+echo "  curl -L https://github.com/sravan27/context-os/releases/latest/download/context-os-aarch64-apple-darwin -o /usr/local/bin/context-os && chmod +x /usr/local/bin/context-os"
+echo ""
+echo "  # From release binary (Linux x86_64):"
+echo "  curl -L https://github.com/sravan27/context-os/releases/latest/download/context-os-x86_64-unknown-linux-gnu -o /usr/local/bin/context-os && chmod +x /usr/local/bin/context-os"
+exit 1
