@@ -10,6 +10,8 @@
 
 - `stack_trace_reducer`
 - `test_log_reducer`
+- `build_log_reducer`
+- `lint_output_reducer`
 - `json_reducer`
 - `config_reducer`
 

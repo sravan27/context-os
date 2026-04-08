@@ -1,6 +1,6 @@
 {
   "name": "context-os",
-  "description": "Automatic context optimization — compresses tool output 27-42%, adds session continuity across usage limits",
+  "description": "Claude limit resilience layer — keeps decisions, failed attempts, and modified files alive through compaction and session resets",
   "version": "0.2.0",
   "author": {
     "name": "sravan27",
@@ -8,6 +8,6 @@
   },
   "homepage": "https://github.com/sravan27/context-os",
   "license": "MIT",
-  "keywords": ["context", "optimization", "tokens", "reducer", "session"],
+  "keywords": ["claude", "compaction", "resilience", "session", "hooks"],
   "platforms": ["claude-code"]
 }

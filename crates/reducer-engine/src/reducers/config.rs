@@ -128,7 +128,8 @@ fn looks_like_stack_trace(input: &str) -> bool {
         .lines()
         .filter(|line| line.trim_start().starts_with("at "))
         .count();
-    let has_error = input.contains("Error:") || input.contains("Exception")
+    let has_error = input.contains("Error:")
+        || input.contains("Exception")
         || input.contains("Traceback (most recent call last)");
     at_lines >= 2 && has_error
 }

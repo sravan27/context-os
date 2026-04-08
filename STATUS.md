@@ -1,35 +1,80 @@
 # STATUS
 
+## Current direction
+
+Context OS is being narrowed around one core promise:
+
+**Claude limit resilience.**
+
+The product now treats typed token reduction as supporting infrastructure for the main value:
+
+- preserve the objective
+- preserve the current subtask
+- preserve validated decisions
+- preserve failed approaches
+- preserve modified files
+- preserve next actions and pinned facts
+
+through compaction and session resets.
+
 ## What works
 
-- **5 typed reducers**: stack traces (42% reduction), test logs (36%), build logs (~40%), JSON (13%), config (13%)
-- **100% protected string recall** in safe mode across all benchmarks
-- **Claude Code integration**: `context-os init` installs SessionStart + UserPromptSubmit + Stop hooks
-- **Session continuity**: auto-handoff with git state (branch, diff, uncommitted files, recent commits)
-- **Per-turn context injection**: `context-os status` runs on every UserPromptSubmit
-- **Repo memory**: scans repo, generates CLAUDE.md with behavioral rules and structural map
-- **Session memory**: structured state with objectives, decisions, failures, pinned facts, compaction
-- **Prompt linter**: detects 6 waste patterns with structured rewrite suggestions
-- **Local telemetry**: SQLite-backed, never leaves the machine
-- **Benchmarks**: 5/5 gates passing, Python eval runners with JSON + Markdown reports
-- **Doctor command**: validates setup, runs quick benchmark, shows status
+- **Compaction-aware decision replay**
+  - `.context-os/session.json` is the canonical structured session state
+  - `.context-os/journal.jsonl` captures append-only hook events
+  - `context-os resume` prints the deterministic restart packet
+  - `PreCompact` and `resume` share the same renderer
+- **Claude Code hook flow**
+  - `context-os init` installs `PreToolUse`, `PostToolUse`, `PreCompact`, `SessionStart`, and `Stop`
+  - `SessionStart` prefers `context-os resume` and falls back to `.context-os/handoff.md`
+- **PostToolUse signal capture**
+  - failing test signatures
+  - failed approaches from compiler/build errors
+  - modified files from `Edit` and `Write`
+  - validated decisions after successful reruns
+  - pinned “do not retry” style facts
+- **Human-readable recovery**
+  - `context-os handoff` writes a Markdown recovery note from the same underlying packet state
+- **6 typed safe reducers**
+  - stack traces
+  - test logs
+  - build logs
+  - lint output
+  - JSON
+  - config files
+- **Repo memory**
+  - `context-os init` builds repo artifacts and updates `CLAUDE.md`
+- **Prompt linter**
+  - detects redundancy, overbreadth, missing scope, and missing acceptance criteria
+- **Local telemetry foundation**
+  - SQLite-backed, local-only
+- **Benchmarks**
+  - safe-mode reduction suite
+  - compaction-survival suite
+- **Doctor command**
+  - checks binary visibility, hook registration, `.context-os` state files, restart packet rendering, and benchmark report pass/fail
 
 ## Verification
 
-```
-cargo test: 26+ tests passing
-safe_mode_runner: 5/5 cases, 26.1% avg reduction, 100% recall
+```text
+cargo test: passing
+safe_mode_runner: 7/7 cases passing, 27.3% avg reduction, 100% protected-string recall
+compaction_survival_runner: 2/2 cases passing, 100% pinned-fact/current-subtask/latest-decision/modified-file retention in benchmark traces
 ```
 
 ## Known limitations
 
-- Token estimates are heuristic, not provider billing numbers
-- Safe mode is conservative — prefers recall over compression
-- Repo memory goes stale between `init` runs (no file watcher)
-- Session compaction is lossy (3 recent turns, 5 failures retained)
-- No dashboard UI yet (React scaffold exists)
-- No response shaping yet (only request-side reduction)
+- Context OS does not bypass provider limits; it preserves continuity and reduces waste
+- Hook support depends on Claude Code surfaces; `context-os resume` is the primary fallback
+- Repo memory still goes stale between refreshes
+- The dashboard is scaffolded but not wired to live telemetry yet
+- Response shaping is still not implemented
+- Session memory capture is heuristic and hook-driven, not semantic/LLM-based
 
-## Architecture
+## Next concrete steps
 
-8 Rust crates + CLI app + Python eval suite. Single binary, no runtime dependencies, no network calls.
+1. Harden Claude Code install and uninstall flows around the shipped hook set.
+2. Add more compaction-survival fixtures and failure-mode evals.
+3. Connect dashboard views to telemetry and benchmark reports.
+4. Improve repo-memory freshness and incremental rebuild behavior.
+5. Document demo workflows and limitations even more explicitly.

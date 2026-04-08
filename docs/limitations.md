@@ -2,12 +2,13 @@
 
 ## Current limitations
 
-- Claude Code integration is scaffolded but not yet wired end to end
+- Context OS does not bypass Anthropic limits; it preserves continuity and trims obvious waste
+- Claude Code integration is hook-based and depends on the stability of Claude Code hook surfaces
 - Repo memory currently focuses on generic source/config indexing and Next.js-style route detection
-- Session memory is file-backed today but not yet integrated with a live Claude Code hook/install flow
+- Session memory capture is heuristic and event-driven; it is not semantic reasoning over every turn
 - Dashboard is scaffolded but not yet connected to live telemetry data
-- The prompt linter uses heuristic rules and is not yet benchmark-calibrated
-- Only four reducers are implemented in this checkpoint
+- The prompt linter uses heuristic rules rather than model-based classification
+- Only safe-mode reducers are benchmarked as recommended defaults today
 - Response shaping is not implemented yet
 
 ## Safety tradeoff

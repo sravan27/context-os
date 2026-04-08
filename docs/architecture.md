@@ -39,6 +39,8 @@
 - Prompt-linter heuristics with structured rewrite suggestions
 - Repo-memory compiler with deterministic JSON and Markdown artifact output
 - Structured session-memory with file-backed state and compaction/diff flows
+- Hook-driven decision capture with append-only journal events
+- Shared restart-packet rendering for `PreCompact` and `resume`
 - Local proxy interception orchestration with reducer application, prompt linting, session-memory attachment, and telemetry writes
 - Config schema and merge model
 - Local SQLite telemetry schema

@@ -1,0 +1,187 @@
+[
+  {
+    "name": "resume_packet_preserves_critical_state",
+    "max_tokens": 220,
+    "required": {
+      "current_subtask": "Wire PreCompact to the shared restart packet renderer",
+      "latest_decision": "Validated current approach with `cargo test api::tests::delete_user`",
+      "decisions": [
+        "Keep `resume` and `PreCompact` on the same renderer"
+      ],
+      "failed_approaches": [
+        "error[E0308]: mismatched types in apps/cli/src/main.rs"
+      ],
+      "modified_files": [
+        "apps/cli/src/main.rs",
+        "hooks/hooks.json"
+      ],
+      "next_actions": [
+        "Run the compaction-survival benchmark suite"
+      ],
+      "pinned_facts": [
+        "Never drop the latest accepted decision",
+        "Do not retry the older UserPromptSubmit path"
+      ]
+    },
+    "state": {
+      "schema_version": 1,
+      "session_objective": "Ship compaction-aware decision replay for Claude Code",
+      "current_subtask": "Wire PreCompact to the shared restart packet renderer",
+      "hard_constraints": [
+        "Do not silently rewrite user intent"
+      ],
+      "accepted_assumptions": [],
+      "decisions_made": [
+        {
+          "summary": "Keep `resume` and `PreCompact` on the same renderer",
+          "rationale": "fallback and automatic recovery must never diverge"
+        },
+        {
+          "summary": "Validated current approach with `cargo test api::tests::delete_user`",
+          "rationale": "successful rerun after prior failing signature"
+        }
+      ],
+      "modified_files": [
+        "apps/cli/src/main.rs",
+        "hooks/hooks.json"
+      ],
+      "tests_run": [
+        {
+          "command": "cargo test api::tests::delete_user",
+          "outcome": "failed"
+        },
+        {
+          "command": "cargo test api::tests::delete_user",
+          "outcome": "passed"
+        },
+        {
+          "command": "cargo test reducers::all",
+          "outcome": "passed"
+        }
+      ],
+      "failing_signatures": [],
+      "failed_approaches": [
+        "error[E0308]: mismatched types in apps/cli/src/main.rs"
+      ],
+      "pending_next_actions": [
+        {
+          "summary": "Run the compaction-survival benchmark suite"
+        }
+      ],
+      "pinned_facts": [
+        {
+          "value": "Never drop the latest accepted decision"
+        },
+        {
+          "value": "Do not retry the older UserPromptSubmit path"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "assistant",
+          "content": "Long intermediate recap that can be dropped first during compaction."
+        },
+        {
+          "role": "assistant",
+          "content": "Another low-priority turn snapshot that should be evicted before decisions."
+        }
+      ],
+      "compaction_count": 0
+    }
+  },
+  {
+    "name": "resume_packet_stays_within_budget_under_noise",
+    "max_tokens": 170,
+    "required": {
+      "current_subtask": "Preserve the latest decision under a tight packet budget",
+      "latest_decision": "Validated current approach with `cargo test reducer_engine::tests::safe`",
+      "decisions": [
+        "Preserve the latest decision under a tight packet budget"
+      ],
+      "failed_approaches": [
+        "error: old compaction summary drifted"
+      ],
+      "modified_files": [
+        "README.md"
+      ],
+      "next_actions": [
+        "Publish the new resilience demo"
+      ],
+      "pinned_facts": [
+        "Pinned facts must always survive compaction"
+      ]
+    },
+    "state": {
+      "schema_version": 1,
+      "session_objective": "Tighten the restart packet budget logic",
+      "current_subtask": "Preserve the latest decision under a tight packet budget",
+      "hard_constraints": [],
+      "accepted_assumptions": [],
+      "decisions_made": [
+        {
+          "summary": "Older decision to drop if needed",
+          "rationale": "low priority"
+        },
+        {
+          "summary": "Preserve the latest decision under a tight packet budget",
+          "rationale": "latest accepted decision must survive"
+        },
+        {
+          "summary": "Validated current approach with `cargo test reducer_engine::tests::safe`",
+          "rationale": "successful rerun after log-heavy failure"
+        }
+      ],
+      "modified_files": [
+        "README.md"
+      ],
+      "tests_run": [
+        {
+          "command": "cargo test reducer_engine::tests::safe",
+          "outcome": "passed"
+        },
+        {
+          "command": "cargo test reducers::stack_trace",
+          "outcome": "passed"
+        },
+        {
+          "command": "cargo test reducers::json",
+          "outcome": "passed"
+        },
+        {
+          "command": "cargo test reducers::config",
+          "outcome": "passed"
+        }
+      ],
+      "failing_signatures": [],
+      "failed_approaches": [
+        "note: noisy command history",
+        "error: old compaction summary drifted"
+      ],
+      "pending_next_actions": [
+        {
+          "summary": "Publish the new resilience demo"
+        }
+      ],
+      "pinned_facts": [
+        {
+          "value": "Pinned facts must always survive compaction"
+        }
+      ],
+      "recent_turns": [
+        {
+          "role": "assistant",
+          "content": "verbose turn one verbose turn one verbose turn one verbose turn one"
+        },
+        {
+          "role": "assistant",
+          "content": "verbose turn two verbose turn two verbose turn two verbose turn two"
+        },
+        {
+          "role": "assistant",
+          "content": "verbose turn three verbose turn three verbose turn three verbose turn three"
+        }
+      ],
+      "compaction_count": 2
+    }
+  }
+]

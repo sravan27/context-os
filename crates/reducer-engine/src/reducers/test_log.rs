@@ -74,9 +74,10 @@ impl Reducer for TestLogReducer {
 
         let pass_regex = Regex::new(r"^(?:PASS|ok)\s+(.+)$").expect("valid regex");
         let symbol_pass_regex = Regex::new(r"^\s*[✓✔]\s+(.+)$").expect("valid regex");
-        let summary_regex =
-            Regex::new(r"^(?:Test Suites:|Tests:|Snapshots:|Time:|Ran all test suites|test result:)")
-                .expect("valid regex");
+        let summary_regex = Regex::new(
+            r"^(?:Test Suites:|Tests:|Snapshots:|Time:|Ran all test suites|test result:)",
+        )
+        .expect("valid regex");
 
         let mut kept = Vec::new();
         let mut pass_count = 0usize;
@@ -165,7 +166,9 @@ impl Reducer for TestLogReducer {
 
         // Add compact summary of passing tests
         if pass_count > 0 {
-            kept.push(format!("[context-os] {pass_count} tests passed (collapsed)"));
+            kept.push(format!(
+                "[context-os] {pass_count} tests passed (collapsed)"
+            ));
         }
         if progress_lines > 0 {
             kept.push(format!(

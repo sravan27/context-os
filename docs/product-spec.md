@@ -2,13 +2,14 @@
 
 ## Thesis
 
-Context OS is a local context optimization layer for coding agents. It reduces repeated context waste caused by repo rediscovery, noisy logs, long sessions, and brittle compaction.
+Context OS is a local Claude Code resilience layer for coding workflows. It reduces repeated context waste, but its primary value is preserving the plan, failed attempts, and modified files through compaction and session resets.
 
 ## MVP goals
 
 - Intercept or shape coding workflow context locally
 - Preserve user trust through explicit, reversible transformations
 - Provide typed reducers instead of a single lossy summarizer
+- Keep structured session state alive through compaction
 - Compile durable repo memory to reduce onboarding tax
 - Lint prompt structure before waste reaches the model context window
 - Measure savings and quality tradeoffs with local benchmarks

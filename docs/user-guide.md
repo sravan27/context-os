@@ -2,14 +2,28 @@
 
 ## Current local workflow
 
-- Use the CLI to inspect token estimates
+- Run `context-os init` once per repo
+- Let Claude Code hooks capture decisions, failures, and modified files while you work
+- Use `context-os resume` if Claude compacts too aggressively or you need to start a new session
+- Use `context-os handoff` when you want a human-readable recovery note
 - Run safe reducers on known noisy artifacts
-- Lint long prompts before sending them to an agent
+- Lint long prompts before sending them to Claude
 - Compile repo memory artifacts for repeated onboarding tasks
-- Persist and compact structured session memory between turns
-- Run local interception passes that update state and telemetry
-- Initialize the local telemetry database
-- Validate global or project config files against the typed config loader
+- Validate config files and run local evals as needed
+
+## Claude workflow example
+
+```bash
+context-os init
+context-os doctor
+```
+
+Then work normally in Claude Code. If you need manual recovery:
+
+```bash
+context-os resume
+context-os handoff
+```
 
 ## Safe reducer example
 
@@ -48,13 +62,8 @@ cargo run -p context-os -- session update \
   --update examples/sample-sessions/update.json
 ```
 
-## Interception example
+## Restart packet example
 
 ```bash
-cargo run -p context-os -- intercept request \
-  --session-id demo-session \
-  --input tests/fixtures/test-log-jest.txt \
-  --mode safe \
-  --session-state /tmp/context-os-session.json \
-  --telemetry-db /tmp/context-os-telemetry.db
+cargo run -p context-os -- resume --root .
 ```

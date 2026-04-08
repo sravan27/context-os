@@ -1,10 +1,10 @@
 {
   "name": "context-os",
-  "description": "Context optimization plugins for Claude Code",
+  "description": "Claude Code resilience plugins",
   "plugins": [
     {
       "name": "context-os",
-      "description": "Automatic tool output compression (27-42%) + session continuity across usage limits",
+      "description": "Compaction-aware decision replay plus typed reducer support for Claude Code",
       "source": ".",
       "version": "0.2.0"
     }

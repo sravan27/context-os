@@ -361,10 +361,16 @@ fn detect_framework(root: &Path, files: &[String]) -> Result<Option<String>, Rep
     }
 
     // Fallback: dominant language by file count
-    let max_count = *[rs_count, go_count, py_count, ts_count + js_count, java_count]
-        .iter()
-        .max()
-        .unwrap_or(&0);
+    let max_count = *[
+        rs_count,
+        go_count,
+        py_count,
+        ts_count + js_count,
+        java_count,
+    ]
+    .iter()
+    .max()
+    .unwrap_or(&0);
     if max_count > 0 {
         if rs_count == max_count {
             return Ok(Some("rust".to_string()));
@@ -524,7 +530,20 @@ fn extract_modules(root: &Path, files: &[String]) -> Result<Vec<ModuleEntry>, Re
 fn is_source_file(file: &str) -> bool {
     matches!(
         file.rsplit('.').next(),
-        Some("ts" | "tsx" | "js" | "jsx" | "py" | "rs" | "go" | "java" | "kt" | "swift" | "rb" | "ex" | "exs")
+        Some(
+            "ts" | "tsx"
+                | "js"
+                | "jsx"
+                | "py"
+                | "rs"
+                | "go"
+                | "java"
+                | "kt"
+                | "swift"
+                | "rb"
+                | "ex"
+                | "exs"
+        )
     )
 }
 
@@ -548,10 +567,14 @@ fn detect_language(file: &str) -> String {
 
 fn classify_module(file: &str) -> String {
     // Tests
-    if file.contains("/test") || file.contains("/tests/")
-        || file.contains(".spec.") || file.contains(".test.")
-        || file.contains("_test.go") || file.contains("_test.rs")
-        || file.ends_with("_test.py") || file.starts_with("test_")
+    if file.contains("/test")
+        || file.contains("/tests/")
+        || file.contains(".spec.")
+        || file.contains(".test.")
+        || file.contains("_test.go")
+        || file.contains("_test.rs")
+        || file.ends_with("_test.py")
+        || file.starts_with("test_")
     {
         return "test".to_string();
     }
@@ -882,8 +905,8 @@ fn render_dependencies_md(dependencies: &[DependencyEntry]) -> String {
 }
 
 /// Render a compact CLAUDE.md from repo memory artifacts.
-/// This is the core product: it eliminates exploration waste and teaches
-/// Claude to work efficiently within the user's usage limits.
+/// This is the repo-facing companion to Context OS's resilience layer:
+/// reduce rediscovery waste and keep Claude focused when limits are tight.
 pub fn render_claude_md(artifacts: &RepoMemoryArtifacts) -> String {
     let mut out = String::new();
 
@@ -899,8 +922,8 @@ pub fn render_claude_md(artifacts: &RepoMemoryArtifacts) -> String {
 
     // --- SESSION CONTINUITY ---
     out.push_str("\n# Session continuity\n\n");
-    out.push_str("If `.context-os/handoff.md` exists, read it first. ");
-    out.push_str("It has the objective, next steps, decisions, and failed approaches from the previous session. ");
+    out.push_str("If Context OS injects a restart packet or `.context-os/handoff.md` exists, read it first. ");
+    out.push_str("Use it to recover the objective, current subtask, validated decisions, failed approaches, and modified files before doing new exploration. ");
     out.push_str("Do not re-attempt anything listed under failed approaches.\n");
 
     // --- REPO MAP ---
@@ -969,7 +992,9 @@ pub fn render_claude_md(artifacts: &RepoMemoryArtifacts) -> String {
             .filter(|m| m.category == "test")
             .count();
         if test_count > 0 {
-            out.push_str(&format!("**tests**: {test_count} test files (not listed, find by convention)\n"));
+            out.push_str(&format!(
+                "**tests**: {test_count} test files (not listed, find by convention)\n"
+            ));
         }
     }
 
@@ -1026,12 +1051,7 @@ fn render_modules_grouped(modules: &[ModuleEntry], out: &mut String) {
         if module.category == "test" || module.category == "package" {
             continue;
         }
-        let dir = module
-            .path
-            .split('/')
-            .next()
-            .unwrap_or(".")
-            .to_string();
+        let dir = module.path.split('/').next().unwrap_or(".").to_string();
         by_dir.entry(dir).or_default().push(module);
     }
 

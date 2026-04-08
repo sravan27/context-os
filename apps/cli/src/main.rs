@@ -1,7 +1,8 @@
 use std::fs;
 use std::io::Read as IoRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -13,7 +14,8 @@ use repo_memory::{build_and_write, build_repo_memory, render_claude_md};
 use serde::Serialize;
 use session_memory::{
     compact_session, diff_memory_states, export_session_state, update_structured_memory,
-    SessionCompactionPolicy, SessionMemoryDiff, SessionMemoryUpdate, StructuredSessionMemory,
+    CommandRecord, DecisionRecord, NextAction, PinnedFact, RecentTurn, SessionCompactionPolicy,
+    SessionMemoryDiff, SessionMemoryUpdate, StructuredSessionMemory,
 };
 use telemetry::TelemetryStore;
 use token_estimator::{estimate_text, ModelFamily};
@@ -36,6 +38,8 @@ enum Commands {
     Pipe(PipeArgs),
     /// Save session state for handoff to a new session when hitting usage limits
     Handoff(HandoffArgs),
+    /// Print the deterministic restart packet used for compaction recovery
+    Resume(ResumeArgs),
     Estimate(EstimateArgs),
     Reduce(ReduceArgs),
     PromptLint(PromptLintArgs),
@@ -94,6 +98,15 @@ struct HandoffArgs {
     /// Pin a critical fact for the next session
     #[arg(long)]
     pin: Vec<String>,
+}
+
+#[derive(Args)]
+struct ResumeArgs {
+    #[arg(long, default_value = ".")]
+    root: PathBuf,
+    /// Maximum estimated Claude tokens for the restart packet
+    #[arg(long, default_value_t = 600)]
+    max_tokens: usize,
 }
 
 #[derive(Args)]
@@ -246,6 +259,10 @@ struct DoctorArgs {
 enum HookSubcommand {
     /// Handle PreToolUse events — wraps Bash commands to reduce output automatically
     PreToolUse,
+    /// Handle PostToolUse events — extract decisions from tool output
+    PostToolUse,
+    /// Handle PreCompact events — inject decisions so they survive compaction
+    PreCompact,
 }
 
 #[derive(Args)]
@@ -285,6 +302,61 @@ struct SessionUpdateOutput {
     diff: SessionMemoryDiff,
 }
 
+#[derive(Debug, Clone)]
+struct RestartPacketPolicy {
+    max_tokens: usize,
+    max_recent_turns: usize,
+    max_tests_run: usize,
+    max_failed_approaches: usize,
+    max_decisions: usize,
+    max_modified_files: usize,
+    max_pending_next_actions: usize,
+}
+
+impl Default for RestartPacketPolicy {
+    fn default() -> Self {
+        Self {
+            max_tokens: 600,
+            max_recent_turns: 6,
+            max_tests_run: 8,
+            max_failed_approaches: 8,
+            max_decisions: 8,
+            max_modified_files: 12,
+            max_pending_next_actions: 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RestartPacket {
+    session_objective: Option<String>,
+    current_subtask: Option<String>,
+    decisions_made: Vec<DecisionRecord>,
+    failed_approaches: Vec<String>,
+    failing_signatures: Vec<String>,
+    modified_files: Vec<String>,
+    pending_next_actions: Vec<NextAction>,
+    pinned_facts: Vec<PinnedFact>,
+    hard_constraints: Vec<String>,
+    tests_run: Vec<CommandRecord>,
+    recent_turns: Vec<RecentTurn>,
+}
+
+#[derive(Debug, Serialize)]
+struct JournalEvent {
+    ts_unix: u64,
+    hook: String,
+    category: String,
+    summary: String,
+    metadata: serde_json::Value,
+}
+
+#[derive(Debug, Default)]
+struct HookProcessingResult {
+    changed: bool,
+    journal_events: Vec<JournalEvent>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -293,6 +365,7 @@ fn main() -> Result<()> {
         Commands::Status(args) => run_status(args),
         Commands::Pipe(args) => run_pipe(args),
         Commands::Handoff(args) => run_handoff(args),
+        Commands::Resume(args) => run_resume(args),
         Commands::Estimate(args) => run_estimate(args),
         Commands::Reduce(args) => run_reduce(args),
         Commands::PromptLint(args) => run_prompt_lint(args),
@@ -311,8 +384,12 @@ fn run_init(args: InitArgs) -> Result<()> {
     let root = fs::canonicalize(&args.root)
         .with_context(|| format!("failed to resolve {}", args.root.display()))?;
 
+    let context_dir = root.join(".context-os");
+    fs::create_dir_all(&context_dir)?;
+    ensure_session_state_files(&root)?;
+
     // 1. Build repo memory
-    let out_dir = root.join(".context-os").join("repo-memory");
+    let out_dir = context_dir.join("repo-memory");
     let artifacts = build_and_write(&root, &out_dir)?;
     eprintln!(
         "indexed {} source files, {} configs",
@@ -336,11 +413,7 @@ fn run_init(args: InitArgs) -> Result<()> {
                     .next()
                     .unwrap_or("")
                     .to_string();
-                let after = existing
-                    .split(marker_end)
-                    .nth(1)
-                    .unwrap_or("")
-                    .to_string();
+                let after = existing.split(marker_end).nth(1).unwrap_or("").to_string();
                 fs::write(&claude_md_path, format!("{before}{block}{after}"))?;
                 eprintln!("updated context-os block in CLAUDE.md");
             } else {
@@ -357,7 +430,7 @@ fn run_init(args: InitArgs) -> Result<()> {
         }
     }
 
-    // 3. Install Claude Code hooks (SessionStart + Stop + UserPromptSubmit)
+    // 3. Install Claude Code hooks for resilience and typed tool reduction
     if !args.no_hooks {
         let claude_dir = root.join(".claude");
         fs::create_dir_all(&claude_dir)?;
@@ -370,15 +443,10 @@ fn run_init(args: InitArgs) -> Result<()> {
             serde_json::json!({})
         };
 
-        let handoff_path = root
-            .join(".context-os")
-            .join("handoff.md")
-            .display()
-            .to_string();
+        let handoff_path = context_dir.join("handoff.md").display().to_string();
 
         // Find the context-os binary
-        let bin_path = std::env::current_exe()
-            .unwrap_or_else(|_| PathBuf::from("context-os"));
+        let bin_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("context-os"));
         let bin = bin_path.display().to_string();
 
         let hooks = serde_json::json!({
@@ -394,6 +462,52 @@ fn run_init(args: InitArgs) -> Result<()> {
                     ]
                 }
             ],
+            "PostToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("{bin} hook post-tool-use"),
+                            "timeout": 5
+                        }
+                    ]
+                },
+                {
+                    "matcher": "Edit",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("{bin} hook post-tool-use"),
+                            "timeout": 5
+                        }
+                    ]
+                },
+                {
+                    "matcher": "Write",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("{bin} hook post-tool-use"),
+                            "timeout": 5
+                        }
+                    ]
+                }
+            ],
+            "PreCompact": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!(
+                                "{bin} hook pre-compact 2>/dev/null || true"
+                            ),
+                            "timeout": 5
+                        }
+                    ]
+                }
+            ],
             "SessionStart": [
                 {
                     "matcher": "",
@@ -401,24 +515,10 @@ fn run_init(args: InitArgs) -> Result<()> {
                         {
                             "type": "command",
                             "command": format!(
-                                "cat \"{handoff_path}\" 2>/dev/null || true"
-                            ),
-                            "timeout": 5
-                        }
-                    ]
-                }
-            ],
-            "UserPromptSubmit": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": format!(
-                                "{bin} status --root \"{}\" 2>/dev/null || true",
+                                "{bin} resume --root \"{}\" 2>/dev/null || cat \"{handoff_path}\" 2>/dev/null || true",
                                 root.display()
                             ),
-                            "timeout": 3
+                            "timeout": 5
                         }
                     ]
                 }
@@ -442,10 +542,7 @@ fn run_init(args: InitArgs) -> Result<()> {
         });
 
         settings["hooks"] = hooks;
-        fs::write(
-            &settings_path,
-            serde_json::to_string_pretty(&settings)?,
-        )?;
+        fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
         eprintln!("installed hooks in .claude/settings.local.json");
     }
 
@@ -456,19 +553,21 @@ fn run_init(args: InitArgs) -> Result<()> {
         if !content.contains(".context-os/") {
             fs::write(
                 &gitignore_path,
-                format!("{}\n\n# Context OS local state\n.context-os/\n", content.trim_end()),
+                format!(
+                    "{}\n\n# Context OS local state\n.context-os/\n",
+                    content.trim_end()
+                ),
             )?;
             eprintln!("added .context-os/ to .gitignore");
         }
     } else {
-        fs::write(
-            &gitignore_path,
-            "# Context OS local state\n.context-os/\n",
-        )?;
+        fs::write(&gitignore_path, "# Context OS local state\n.context-os/\n")?;
         eprintln!("created .gitignore with .context-os/");
     }
 
-    eprintln!("done. Claude Code will now start sessions with repo context loaded.");
+    eprintln!(
+        "done. Claude Code will now preserve restart state across compaction and session resets."
+    );
     Ok(())
 }
 
@@ -514,8 +613,7 @@ struct GitState {
 fn run_handoff(args: HandoffArgs) -> Result<()> {
     let root = fs::canonicalize(&args.root)
         .with_context(|| format!("failed to resolve {}", args.root.display()))?;
-    let context_dir = root.join(".context-os");
-    fs::create_dir_all(&context_dir)?;
+    let context_dir = ensure_session_state_files(&root)?;
 
     let session_path = context_dir.join("session.json");
     let mut state = StructuredSessionMemory::load_or_default(&session_path)?;
@@ -536,9 +634,9 @@ fn run_handoff(args: HandoffArgs) -> Result<()> {
     }
     if let Some(next) = args.next {
         state.pending_next_actions.clear();
-        state.pending_next_actions.push(session_memory::NextAction {
-            summary: next,
-        });
+        state
+            .pending_next_actions
+            .push(session_memory::NextAction { summary: next });
     }
     for fact in args.pin {
         state.pin_fact(fact);
@@ -554,112 +652,38 @@ fn run_handoff(args: HandoffArgs) -> Result<()> {
 
     state.save_to_path(&session_path)?;
 
+    let packet = build_restart_packet(&state, &RestartPacketPolicy::default());
+
     // Also write a human-readable handoff note
     let handoff_path = context_dir.join("handoff.md");
-    let mut note = String::from("# Session Handoff\n\n");
-    note.push_str("Read this at the start of a new session to continue where the previous session left off.\n\n");
-
-    // Git state section — always present if in a git repo
-    if git.branch.is_some() || !git.uncommitted_files.is_empty() {
-        note.push_str("## Git state\n\n");
-        if let Some(branch) = &git.branch {
-            note.push_str(&format!("Branch: `{branch}`\n"));
-        }
-        if let Some(last) = &git.last_commit {
-            note.push_str(&format!("Last commit: `{last}`\n"));
-        }
-        if !git.uncommitted_files.is_empty() {
-            note.push_str(&format!(
-                "Uncommitted changes: {} files\n",
-                git.uncommitted_files.len()
-            ));
-            for f in git.uncommitted_files.iter().take(15) {
-                note.push_str(&format!("  - {f}\n"));
-            }
-            if git.uncommitted_files.len() > 15 {
-                note.push_str(&format!(
-                    "  - ...and {} more\n",
-                    git.uncommitted_files.len() - 15
-                ));
-            }
-        }
-        if let Some(diff_stat) = &git.diff_stat {
-            note.push_str(&format!("\n```\n{diff_stat}\n```\n"));
-        }
-        if let Some(commits) = &git.recent_commits {
-            note.push_str("\nRecent commits:\n");
-            for line in commits.lines().take(5) {
-                note.push_str(&format!("  {line}\n"));
-            }
-        }
-        note.push('\n');
-    }
-
-    if let Some(objective) = &state.session_objective {
-        note.push_str(&format!("## Objective\n\n{objective}\n\n"));
-    }
-    if let Some(subtask) = &state.current_subtask {
-        note.push_str(&format!("## Current subtask\n\n{subtask}\n\n"));
-    }
-    if !state.pending_next_actions.is_empty() {
-        note.push_str("## Next steps\n\n");
-        for action in &state.pending_next_actions {
-            note.push_str(&format!("- {}\n", action.summary));
-        }
-        note.push('\n');
-    }
-    if !state.modified_files.is_empty() {
-        note.push_str("## Modified files\n\n");
-        for file in state.modified_files.iter().rev().take(10) {
-            note.push_str(&format!("- {file}\n"));
-        }
-        note.push('\n');
-    }
-    if !state.decisions_made.is_empty() {
-        note.push_str("## Key decisions\n\n");
-        for decision in state.decisions_made.iter().rev().take(5) {
-            note.push_str(&format!("- {}", decision.summary));
-            if let Some(rationale) = &decision.rationale {
-                note.push_str(&format!(" ({})", rationale));
-            }
-            note.push('\n');
-        }
-        note.push('\n');
-    }
-    if !state.failing_signatures.is_empty() {
-        note.push_str("## Known failures\n\n");
-        for sig in &state.failing_signatures {
-            note.push_str(&format!("- {sig}\n"));
-        }
-        note.push('\n');
-    }
-    if !state.failed_approaches.is_empty() {
-        note.push_str("## Failed approaches (don't retry)\n\n");
-        for approach in &state.failed_approaches {
-            note.push_str(&format!("- {approach}\n"));
-        }
-        note.push('\n');
-    }
-    if !state.hard_constraints.is_empty() {
-        note.push_str("## Constraints\n\n");
-        for constraint in &state.hard_constraints {
-            note.push_str(&format!("- {constraint}\n"));
-        }
-        note.push('\n');
-    }
-    if !state.pinned_facts.is_empty() {
-        note.push_str("## Pinned facts\n\n");
-        for fact in &state.pinned_facts {
-            note.push_str(&format!("- {}\n", fact.value));
-        }
-        note.push('\n');
-    }
+    let note = render_handoff_markdown(&git, &packet);
 
     fs::write(&handoff_path, &note)?;
 
     // Print the handoff note so user/Claude can see it
     print!("{note}");
     eprintln!("saved to {}", handoff_path.display());
+    Ok(())
+}
+
+fn run_resume(args: ResumeArgs) -> Result<()> {
+    let root = fs::canonicalize(&args.root)
+        .with_context(|| format!("failed to resolve {}", args.root.display()))?;
+    let context_dir = root.join(".context-os");
+    let session_path = context_dir.join("session.json");
+
+    if !session_path.exists() {
+        return Ok(());
+    }
+
+    let state = StructuredSessionMemory::load_from_path(&session_path)?;
+    let mut policy = RestartPacketPolicy::default();
+    policy.max_tokens = args.max_tokens;
+    let packet = build_restart_packet(&state, &policy);
+    let rendered = render_restart_packet(&packet);
+    if !rendered.is_empty() {
+        print!("{rendered}");
+    }
     Ok(())
 }
 
@@ -709,6 +733,675 @@ fn run_status(args: StatusArgs) -> Result<()> {
     Ok(())
 }
 
+fn ensure_session_state_files(root: &Path) -> Result<PathBuf> {
+    let context_dir = root.join(".context-os");
+    fs::create_dir_all(&context_dir)?;
+
+    let session_path = context_dir.join("session.json");
+    if !session_path.exists() {
+        StructuredSessionMemory::default().save_to_path(&session_path)?;
+    }
+
+    let journal_path = context_dir.join("journal.jsonl");
+    if !journal_path.exists() {
+        fs::write(&journal_path, "")?;
+    }
+
+    Ok(context_dir)
+}
+
+fn find_context_dir(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start);
+    while let Some(path) = current {
+        let candidate = path.join(".context-os");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        current = path.parent();
+    }
+    None
+}
+
+fn build_restart_packet(
+    state: &StructuredSessionMemory,
+    policy: &RestartPacketPolicy,
+) -> RestartPacket {
+    let mut packet = RestartPacket {
+        session_objective: state.session_objective.clone(),
+        current_subtask: state.current_subtask.clone(),
+        decisions_made: take_recent(&state.decisions_made, policy.max_decisions),
+        failed_approaches: take_recent(&state.failed_approaches, policy.max_failed_approaches),
+        failing_signatures: state.failing_signatures.clone(),
+        modified_files: take_recent(&state.modified_files, policy.max_modified_files),
+        pending_next_actions: take_recent(
+            &state.pending_next_actions,
+            policy.max_pending_next_actions,
+        ),
+        pinned_facts: state.pinned_facts.clone(),
+        hard_constraints: state.hard_constraints.clone(),
+        tests_run: take_recent(&state.tests_run, policy.max_tests_run),
+        recent_turns: take_recent(&state.recent_turns, policy.max_recent_turns),
+    };
+
+    while estimate_text(&render_restart_packet(&packet), ModelFamily::Claude).estimated_tokens
+        > policy.max_tokens as u32
+    {
+        if !packet.recent_turns.is_empty() {
+            packet.recent_turns.remove(0);
+            continue;
+        }
+        if !packet.tests_run.is_empty() {
+            packet.tests_run.remove(0);
+            continue;
+        }
+        if !packet.failed_approaches.is_empty() {
+            drop_low_value_failed_approach(&mut packet.failed_approaches);
+            continue;
+        }
+        if packet.decisions_made.len() > 1 {
+            packet.decisions_made.remove(0);
+            continue;
+        }
+        break;
+    }
+
+    packet
+}
+
+fn render_restart_packet(packet: &RestartPacket) -> String {
+    let mut out = String::new();
+    let mut sections = 0usize;
+
+    if let Some(objective) = &packet.session_objective {
+        out.push_str("[context-os restart packet]\n");
+        out.push_str("OBJECTIVE\n");
+        out.push_str(objective.trim());
+        out.push_str("\n\n");
+        sections += 1;
+    }
+
+    if let Some(subtask) = &packet.current_subtask {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("CURRENT SUBTASK\n");
+        out.push_str(subtask.trim());
+        out.push_str("\n\n");
+        sections += 1;
+    }
+
+    if !packet.decisions_made.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("DECISIONS MADE\n");
+        for decision in &packet.decisions_made {
+            out.push_str("- ");
+            out.push_str(decision.summary.trim());
+            out.push('\n');
+            if let Some(rationale) = &decision.rationale {
+                out.push_str("  why: ");
+                out.push_str(rationale.trim());
+                out.push('\n');
+            }
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.failed_approaches.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("FAILED APPROACHES TO AVOID\n");
+        for item in &packet.failed_approaches {
+            out.push_str("- ");
+            out.push_str(item.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.failing_signatures.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("CURRENT FAILING SIGNATURES\n");
+        for item in &packet.failing_signatures {
+            out.push_str("- ");
+            out.push_str(item.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.modified_files.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("MODIFIED FILES\n");
+        for item in &packet.modified_files {
+            out.push_str("- ");
+            out.push_str(item.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.pending_next_actions.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("NEXT ACTIONS\n");
+        for action in &packet.pending_next_actions {
+            out.push_str("- ");
+            out.push_str(action.summary.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.pinned_facts.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("PINNED FACTS\n");
+        for fact in &packet.pinned_facts {
+            out.push_str("- ");
+            out.push_str(fact.value.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.hard_constraints.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("CONSTRAINTS\n");
+        for item in &packet.hard_constraints {
+            out.push_str("- ");
+            out.push_str(item.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.tests_run.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("RECENT TESTS AND BUILDS\n");
+        for record in &packet.tests_run {
+            out.push_str("- ");
+            out.push_str(record.command.trim());
+            if let Some(outcome) = &record.outcome {
+                out.push_str(" (");
+                out.push_str(outcome.trim());
+                out.push(')');
+            }
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if !packet.recent_turns.is_empty() {
+        if sections == 0 {
+            out.push_str("[context-os restart packet]\n");
+        }
+        out.push_str("RECENT TURN SNAPSHOT\n");
+        for turn in &packet.recent_turns {
+            out.push_str("- ");
+            out.push_str(turn.role.trim());
+            out.push_str(": ");
+            out.push_str(turn.content.trim());
+            out.push('\n');
+        }
+        out.push('\n');
+        sections += 1;
+    }
+
+    if sections > 0 {
+        out.push_str("[/context-os]\n");
+    }
+
+    out
+}
+
+fn render_handoff_markdown(git: &GitState, packet: &RestartPacket) -> String {
+    let mut note = String::from("# Session Handoff\n\n");
+    note.push_str(
+        "Read this at the start of a new session to continue without losing decisions, failures, or file state.\n\n",
+    );
+
+    if git.branch.is_some() || !git.uncommitted_files.is_empty() || git.last_commit.is_some() {
+        note.push_str("## Git state\n\n");
+        if let Some(branch) = &git.branch {
+            note.push_str(&format!("Branch: `{branch}`\n"));
+        }
+        if let Some(last) = &git.last_commit {
+            note.push_str(&format!("Last commit: `{last}`\n"));
+        }
+        if !git.uncommitted_files.is_empty() {
+            note.push_str(&format!(
+                "Uncommitted changes: {} files\n",
+                git.uncommitted_files.len()
+            ));
+            for file in git.uncommitted_files.iter().take(15) {
+                note.push_str(&format!("- {file}\n"));
+            }
+        }
+        if let Some(diff_stat) = &git.diff_stat {
+            note.push_str("\n```text\n");
+            note.push_str(diff_stat.trim());
+            note.push_str("\n```\n");
+        }
+        if let Some(commits) = &git.recent_commits {
+            note.push_str("\nRecent commits:\n");
+            for line in commits.lines().take(5) {
+                note.push_str(&format!("- {line}\n"));
+            }
+        }
+        note.push('\n');
+    }
+
+    push_markdown_text_section(&mut note, "Objective", packet.session_objective.as_deref());
+    push_markdown_text_section(
+        &mut note,
+        "Current subtask",
+        packet.current_subtask.as_deref(),
+    );
+    push_markdown_bullet_section(
+        &mut note,
+        "Next actions",
+        &packet
+            .pending_next_actions
+            .iter()
+            .map(|item| item.summary.clone())
+            .collect::<Vec<_>>(),
+    );
+    push_markdown_bullet_section(&mut note, "Modified files", &packet.modified_files);
+
+    if !packet.decisions_made.is_empty() {
+        note.push_str("## Decisions made\n\n");
+        for decision in &packet.decisions_made {
+            note.push_str(&format!("- {}", decision.summary));
+            if let Some(rationale) = &decision.rationale {
+                note.push_str(&format!(" ({})", rationale));
+            }
+            note.push('\n');
+        }
+        note.push('\n');
+    }
+
+    push_markdown_bullet_section(
+        &mut note,
+        "Failed approaches (do not retry)",
+        &packet.failed_approaches,
+    );
+    push_markdown_bullet_section(
+        &mut note,
+        "Currently failing signatures",
+        &packet.failing_signatures,
+    );
+    push_markdown_bullet_section(
+        &mut note,
+        "Pinned facts",
+        &packet
+            .pinned_facts
+            .iter()
+            .map(|item| item.value.clone())
+            .collect::<Vec<_>>(),
+    );
+    push_markdown_bullet_section(&mut note, "Constraints", &packet.hard_constraints);
+
+    note
+}
+
+fn push_markdown_text_section(out: &mut String, title: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        out.push_str(&format!("## {title}\n\n{}\n\n", value.trim()));
+    }
+}
+
+fn push_markdown_bullet_section(out: &mut String, title: &str, items: &[String]) {
+    if items.is_empty() {
+        return;
+    }
+    out.push_str(&format!("## {title}\n\n"));
+    for item in items {
+        out.push_str(&format!("- {}\n", item.trim()));
+    }
+    out.push('\n');
+}
+
+fn take_recent<T: Clone>(items: &[T], max: usize) -> Vec<T> {
+    if items.len() <= max {
+        items.to_vec()
+    } else {
+        items[items.len() - max..].to_vec()
+    }
+}
+
+fn failed_approach_value(item: &str) -> usize {
+    let lower = item.to_ascii_lowercase();
+    let mut score = 0usize;
+    if lower.contains("error") || lower.contains("failed") || lower.contains("panic") {
+        score += 2;
+    }
+    if lower.contains('/') || lower.contains("::") || lower.contains(".rs") || lower.contains(".ts")
+    {
+        score += 2;
+    }
+    if lower.contains("test") || lower.contains("build") || lower.contains("compiler") {
+        score += 1;
+    }
+    score
+}
+
+fn drop_low_value_failed_approach(items: &mut Vec<String>) {
+    if items.is_empty() {
+        return;
+    }
+
+    let mut index_to_remove = 0usize;
+    let mut lowest_score = usize::MAX;
+    for (idx, item) in items.iter().enumerate() {
+        let score = failed_approach_value(item);
+        if score < lowest_score {
+            lowest_score = score;
+            index_to_remove = idx;
+        }
+    }
+    items.remove(index_to_remove);
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn append_journal_events(context_dir: &Path, events: &[JournalEvent]) -> Result<()> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let journal_path = context_dir.join("journal.jsonl");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&journal_path)
+        .with_context(|| format!("failed to open {}", journal_path.display()))?;
+
+    for event in events {
+        use std::io::Write;
+        writeln!(file, "{}", serde_json::to_string(event)?)
+            .with_context(|| format!("failed to append {}", journal_path.display()))?;
+    }
+    Ok(())
+}
+
+fn looks_like_failure(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("test result: failed")
+        || lower.contains("failed")
+        || lower.contains("panic")
+        || lower.contains("error:")
+        || lower.contains("error[")
+        || lower.contains("compilation failed")
+        || lower.contains("build failed")
+}
+
+fn looks_like_success(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("test result: ok")
+        || lower.contains("tests passed")
+        || lower.contains("build succeeded")
+        || lower.contains("finished `")
+        || lower.contains("finished dev")
+        || lower.contains("0 failed")
+        || lower.contains("compiled successfully")
+}
+
+fn extract_failing_signatures(output: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("test ") && trimmed.ends_with("... FAILED") {
+            signatures.push(
+                trimmed
+                    .trim_start_matches("test ")
+                    .trim_end_matches(" ... FAILED")
+                    .to_string(),
+            );
+        } else if trimmed.starts_with("FAIL ") {
+            signatures.push(trimmed.trim_start_matches("FAIL ").to_string());
+        } else if trimmed.contains("panicked at") && trimmed.contains("::") {
+            signatures.push(trimmed.to_string());
+        }
+    }
+    signatures
+}
+
+fn extract_failed_approach(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("error[") || trimmed.starts_with("error:") {
+            return Some(if trimmed.len() > 140 {
+                format!("{}...", &trimmed[..137])
+            } else {
+                trimmed.to_string()
+            });
+        }
+    }
+    None
+}
+
+fn extract_pinned_fact(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.contains("do not retry")
+            || lower.contains("don't retry")
+            || lower.contains("never retry")
+            || lower.contains("do not use")
+            || lower.contains("must keep")
+        {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+fn summarize_command(command: &str) -> String {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        "a Claude Code tool action".to_string()
+    } else if trimmed.len() > 120 {
+        format!("{}...", &trimmed[..117])
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn relative_path_display(cwd: &Path, path: &str) -> String {
+    let path_buf = PathBuf::from(path);
+    path_buf
+        .strip_prefix(cwd)
+        .ok()
+        .map(|value| value.display().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| path.trim_start_matches('/').to_string())
+}
+
+fn process_post_tool_use_event(
+    state: &mut StructuredSessionMemory,
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+    tool_output: &str,
+    cwd: &Path,
+) -> HookProcessingResult {
+    let mut result = HookProcessingResult::default();
+    let tool_name = tool_name.trim();
+
+    if tool_name == "Bash" {
+        let command = tool_input
+            .get("command")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let outcome = if looks_like_failure(tool_output) {
+            "failed"
+        } else if looks_like_success(tool_output) {
+            "passed"
+        } else {
+            "observed"
+        };
+
+        let command_record = CommandRecord {
+            command: summarize_command(command),
+            outcome: Some(outcome.to_string()),
+        };
+        if !state.tests_run.contains(&command_record) {
+            state.tests_run.push(command_record.clone());
+            result.changed = true;
+            result.journal_events.push(JournalEvent {
+                ts_unix: now_unix(),
+                hook: "PostToolUse".to_string(),
+                category: "command_recorded".to_string(),
+                summary: format!("Recorded `{}` as {}", command_record.command, outcome),
+                metadata: serde_json::json!({
+                    "command": command_record.command,
+                    "outcome": outcome,
+                }),
+            });
+        }
+
+        if looks_like_failure(tool_output) {
+            for signature in extract_failing_signatures(tool_output) {
+                if !state.failing_signatures.contains(&signature) {
+                    state.failing_signatures.push(signature.clone());
+                    result.changed = true;
+                    result.journal_events.push(JournalEvent {
+                        ts_unix: now_unix(),
+                        hook: "PostToolUse".to_string(),
+                        category: "failing_signature".to_string(),
+                        summary: format!("Captured failing signature `{signature}`"),
+                        metadata: serde_json::json!({ "signature": signature }),
+                    });
+                }
+            }
+
+            if let Some(approach) = extract_failed_approach(tool_output) {
+                if !state.failed_approaches.contains(&approach) {
+                    state.failed_approaches.push(approach.clone());
+                    result.changed = true;
+                    result.journal_events.push(JournalEvent {
+                        ts_unix: now_unix(),
+                        hook: "PostToolUse".to_string(),
+                        category: "failed_approach".to_string(),
+                        summary: format!("Recorded failed approach `{approach}`"),
+                        metadata: serde_json::json!({ "approach": approach }),
+                    });
+                }
+            }
+        }
+
+        if let Some(fact) = extract_pinned_fact(tool_output) {
+            let pinned_fact = PinnedFact {
+                value: fact.clone(),
+            };
+            if !state.pinned_facts.contains(&pinned_fact) {
+                state.pinned_facts.push(pinned_fact);
+                result.changed = true;
+                result.journal_events.push(JournalEvent {
+                    ts_unix: now_unix(),
+                    hook: "PostToolUse".to_string(),
+                    category: "pinned_fact".to_string(),
+                    summary: format!("Pinned `{fact}`"),
+                    metadata: serde_json::json!({ "fact": fact }),
+                });
+            }
+        }
+
+        if looks_like_success(tool_output)
+            && (!state.failing_signatures.is_empty() || !state.failed_approaches.is_empty())
+        {
+            let cleared_failures = state.failing_signatures.len();
+            state.failing_signatures.clear();
+            let decision = DecisionRecord {
+                summary: format!(
+                    "Validated current approach with `{}`",
+                    summarize_command(command)
+                ),
+                rationale: Some(format!(
+                    "successful rerun after {} prior failing signature(s)",
+                    cleared_failures
+                )),
+            };
+            if !state.decisions_made.contains(&decision) {
+                state.decisions_made.push(decision.clone());
+                result.changed = true;
+                result.journal_events.push(JournalEvent {
+                    ts_unix: now_unix(),
+                    hook: "PostToolUse".to_string(),
+                    category: "decision".to_string(),
+                    summary: decision.summary.clone(),
+                    metadata: serde_json::json!({
+                        "rationale": decision.rationale,
+                    }),
+                });
+            }
+        }
+    }
+
+    if tool_name == "Edit" || tool_name == "Write" {
+        if let Some(path) = tool_input
+            .get("file_path")
+            .and_then(|value| value.as_str())
+            .or_else(|| tool_input.get("path").and_then(|value| value.as_str()))
+        {
+            let short = relative_path_display(cwd, path);
+            if !state.modified_files.contains(&short) {
+                state.modified_files.push(short.clone());
+                result.changed = true;
+                result.journal_events.push(JournalEvent {
+                    ts_unix: now_unix(),
+                    hook: "PostToolUse".to_string(),
+                    category: "modified_file".to_string(),
+                    summary: format!("Recorded modified file `{short}`"),
+                    metadata: serde_json::json!({ "file": short }),
+                });
+            }
+        }
+    }
+
+    if state.tests_run.len() > 20 {
+        state.tests_run = take_recent(&state.tests_run, 20);
+    }
+    if state.failing_signatures.len() > 12 {
+        state.failing_signatures = take_recent(&state.failing_signatures, 12);
+    }
+    if state.failed_approaches.len() > 12 {
+        state.failed_approaches = take_recent(&state.failed_approaches, 12);
+    }
+    if state.modified_files.len() > 24 {
+        state.modified_files = take_recent(&state.modified_files, 24);
+    }
+    if state.decisions_made.len() > 12 {
+        state.decisions_made = take_recent(&state.decisions_made, 12);
+    }
+
+    result
+}
+
 fn run_pipe(args: PipeArgs) -> Result<()> {
     let mut input = String::new();
     std::io::stdin()
@@ -728,7 +1421,11 @@ fn run_pipe(args: PipeArgs) -> Result<()> {
 
     // Auto-detect or use forced kind
     let kind = if let Some(kind_str) = args.kind {
-        Some(kind_str.parse::<ReducerKind>().map_err(anyhow::Error::msg)?)
+        Some(
+            kind_str
+                .parse::<ReducerKind>()
+                .map_err(anyhow::Error::msg)?,
+        )
     } else {
         registry
             .detect_best(&input)
@@ -959,6 +1656,13 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     println!("\ncontext-os doctor\n");
 
     let mut all_ok = true;
+    let bin_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("context-os"));
+    if bin_path.exists() {
+        println!("  ✓ context-os binary available at {}", bin_path.display());
+    } else {
+        println!("  ✗ could not resolve the running context-os binary");
+        all_ok = false;
+    }
 
     // 1. Git repo check
     let git_check = Command::new("git")
@@ -976,12 +1680,12 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
                 .filter(|o| o.status.success())
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            println!("  \u{2713} git repository detected (branch: {branch})");
+            println!("  ✓ git repository detected (branch: {branch})");
             Some(branch)
         }
         _ => {
-            println!("  \u{2717} not a git repository");
-            println!("    \u{2192} run `git init` first");
+            println!("  ✗ not a git repository");
+            println!("    → run `git init` first");
             all_ok = false;
             None
         }
@@ -991,10 +1695,10 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     // 2. .context-os/ directory
     let context_dir = root.join(".context-os");
     if context_dir.is_dir() {
-        println!("  \u{2713} .context-os/ directory exists");
+        println!("  ✓ .context-os/ directory exists");
     } else {
-        println!("  \u{2717} .context-os/ directory missing");
-        println!("    \u{2192} run `context-os init` to set up");
+        println!("  ✗ .context-os/ directory missing");
+        println!("    → run `context-os init` to set up");
         all_ok = false;
     }
 
@@ -1003,15 +1707,15 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     if claude_md_path.exists() {
         let content = fs::read_to_string(&claude_md_path).unwrap_or_default();
         if content.contains("<!-- context-os:start -->") {
-            println!("  \u{2713} CLAUDE.md has context-os block");
+            println!("  ✓ CLAUDE.md has context-os block");
         } else {
-            println!("  \u{2717} CLAUDE.md exists but missing context-os block");
-            println!("    \u{2192} run `context-os init` to add the repo map");
+            println!("  ✗ CLAUDE.md exists but missing context-os block");
+            println!("    → run `context-os init` to add the repo map");
             all_ok = false;
         }
     } else {
-        println!("  \u{2717} CLAUDE.md not found");
-        println!("    \u{2192} run `context-os init` to generate it");
+        println!("  ✗ CLAUDE.md not found");
+        println!("    → run `context-os init` to generate it");
         all_ok = false;
     }
 
@@ -1020,35 +1724,41 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).unwrap_or_default();
         let has_pre_tool = content.contains("PreToolUse");
+        let has_post_tool = content.contains("PostToolUse");
+        let has_pre_compact = content.contains("PreCompact");
         let has_session_start = content.contains("SessionStart");
-        let has_prompt_submit = content.contains("UserPromptSubmit");
         let has_stop = content.contains("Stop");
-        if has_pre_tool && has_session_start && has_prompt_submit && has_stop {
-            println!("  \u{2713} Claude Code hooks installed (PreToolUse, SessionStart, UserPromptSubmit, Stop)");
+        if has_pre_tool && has_post_tool && has_pre_compact && has_session_start && has_stop {
+            println!(
+                "  ✓ Claude Code hooks installed (PreToolUse, PostToolUse, PreCompact, SessionStart, Stop)"
+            );
         } else {
             let mut missing = Vec::new();
             if !has_pre_tool {
                 missing.push("PreToolUse");
             }
+            if !has_post_tool {
+                missing.push("PostToolUse");
+            }
+            if !has_pre_compact {
+                missing.push("PreCompact");
+            }
             if !has_session_start {
                 missing.push("SessionStart");
-            }
-            if !has_prompt_submit {
-                missing.push("UserPromptSubmit");
             }
             if !has_stop {
                 missing.push("Stop");
             }
             println!(
-                "  \u{2717} Claude Code hooks incomplete (missing: {})",
+                "  ✗ Claude Code hooks incomplete (missing: {})",
                 missing.join(", ")
             );
-            println!("    \u{2192} run `context-os init` to install hooks");
+            println!("    → run `context-os init` to install hooks");
             all_ok = false;
         }
     } else {
-        println!("  \u{2717} .claude/settings.local.json not found");
-        println!("    \u{2192} run `context-os init` to install hooks");
+        println!("  ✗ .claude/settings.local.json not found");
+        println!("    → run `context-os init` to install hooks");
         all_ok = false;
     }
 
@@ -1057,51 +1767,19 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     if gitignore_path.exists() {
         let content = fs::read_to_string(&gitignore_path).unwrap_or_default();
         if content.contains(".context-os/") || content.contains(".context-os") {
-            println!("  \u{2713} .context-os/ in .gitignore");
+            println!("  ✓ .context-os/ in .gitignore");
         } else {
-            println!("  \u{2717} .context-os/ not in .gitignore");
-            println!("    \u{2192} add `.context-os/` to your .gitignore");
+            println!("  ✗ .context-os/ not in .gitignore");
+            println!("    → add `.context-os/` to your .gitignore");
             all_ok = false;
         }
     } else {
-        println!("  \u{2717} .gitignore not found (.context-os/ may be tracked)");
-        println!("    \u{2192} run `context-os init` to create .gitignore");
+        println!("  ✗ .gitignore not found (.context-os/ may be tracked)");
+        println!("    → run `context-os init` to create .gitignore");
         all_ok = false;
     }
 
-    // 6. handoff.md
-    let handoff_path = context_dir.join("handoff.md");
-    if handoff_path.exists() {
-        let age = handoff_path
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|modified| {
-                std::time::SystemTime::now()
-                    .duration_since(modified)
-                    .ok()
-            });
-        let age_str = match age {
-            Some(d) => {
-                let secs = d.as_secs();
-                if secs < 60 {
-                    format!("{secs} seconds ago")
-                } else if secs < 3600 {
-                    format!("{} minutes ago", secs / 60)
-                } else if secs < 86400 {
-                    format!("{} hours ago", secs / 3600)
-                } else {
-                    format!("{} days ago", secs / 86400)
-                }
-            }
-            None => "unknown age".to_string(),
-        };
-        println!("  \u{2713} handoff.md exists ({age_str})");
-    } else {
-        println!("  - handoff.md not found (created on first session end)");
-    }
-
-    // 7. session.json
+    // 6. session.json
     let session_path = context_dir.join("session.json");
     if session_path.exists() {
         if let Ok(state) = StructuredSessionMemory::load_from_path(&session_path) {
@@ -1117,123 +1795,110 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
                     format!(" (objective: \"{truncated}\")")
                 })
                 .unwrap_or_default();
-            println!("  \u{2713} session.json exists{obj_str}");
+            println!("  ✓ session.json exists{obj_str}");
         } else {
-            println!("  \u{2713} session.json exists (could not parse)");
+            println!("  ✗ session.json exists but could not be parsed");
+            all_ok = false;
         }
     } else {
-        println!("  - session.json not found (created on first handoff)");
+        println!("  ✗ session.json not found");
+        println!("    → run `context-os init` to create canonical state files");
+        all_ok = false;
     }
 
-    // Quick benchmark
-    println!("\n  Quick benchmark:");
-
-    let registry = ReducerRegistry::default();
-    let protections = ProtectionRules::safe_defaults();
-
-    let sample_stack = "\
-thread 'main' panicked at 'index out of bounds: the len is 3 but the index is 5', src/main.rs:42:10
-stack backtrace:
-   0: rust_begin_unwind
-             at /rustc/abc123/library/std/src/panicking.rs:616:5
-   1: core::panicking::panic_fmt
-             at /rustc/abc123/library/core/src/panicking.rs:72:14
-   2: core::panicking::panic_bounds_check
-             at /rustc/abc123/library/core/src/panicking.rs:208:5
-   3: <usize as core::slice::index::SliceIndex<[T]>>::index
-             at /rustc/abc123/library/core/src/slice/index.rs:255:10
-   4: core::slice::index::<impl core::ops::index::Index<I> for [T]>::index
-             at /rustc/abc123/library/core/src/slice/index.rs:18:9
-   5: alloc::vec::impl$12::index
-             at /rustc/abc123/library/alloc/src/vec/mod.rs:2770:9
-   6: myapp::process_items
-             at ./src/main.rs:42:10
-   7: myapp::main
-             at ./src/main.rs:15:5
-   8: core::ops::function::FnOnce::call_once
-             at /rustc/abc123/library/core/src/ops/function.rs:250:5
-   9: std::sys::backtrace::__rust_begin_short_backtrace
-             at /rustc/abc123/library/std/src/sys/backtrace.rs:152:18
-  10: std::rt::lang_start::{{closure}}
-             at /rustc/abc123/library/std/src/rt.rs:195:18
-  11: std::rt::lang_start_internal
-             at /rustc/abc123/library/std/src/rt.rs:174:5
-  12: main
-  13: __libc_start_main
-  14: _start";
-
-    let sample_test_log = "\
-running 12 tests
-test auth::tests::login_success ... ok
-test auth::tests::login_bad_password ... ok
-test auth::tests::login_expired_token ... ok
-test auth::tests::refresh_token ... ok
-test db::tests::connection_pool ... ok
-test db::tests::migration_up ... ok
-test db::tests::migration_down ... ok
-test api::tests::get_users ... ok
-test api::tests::create_user ... ok
-test api::tests::delete_user ... FAILED
-test api::tests::update_user ... ok
-test api::tests::list_users ... ok
-
-failures:
-
----- api::tests::delete_user stdout ----
-thread 'api::tests::delete_user' panicked at 'assertion failed: response.status() == 200'
-
-failures:
-    api::tests::delete_user
-
-test result: FAILED. 11 passed; 1 failed; 0 ignored";
-
-    // Stack trace benchmark
-    let before_stack = estimate_text(sample_stack, ModelFamily::Claude).estimated_tokens;
-    if let Some(result) = registry.reduce(
-        ReducerKind::StackTrace,
-        sample_stack,
-        ReductionMode::Safe,
-        &protections,
-    ) {
-        let after_stack = estimate_text(&result.output, ModelFamily::Claude).estimated_tokens;
-        if before_stack > 0 {
-            let pct = ((before_stack as f64 - after_stack as f64) / before_stack as f64 * 100.0) as u32;
-            println!("    Stack trace: {before_stack} \u{2192} {after_stack} tokens ({pct}% reduction)");
-        }
+    // 7. journal.jsonl
+    let journal_path = context_dir.join("journal.jsonl");
+    if journal_path.exists() {
+        println!("  ✓ journal.jsonl exists");
     } else {
-        println!("    Stack trace: reducer not available");
+        println!("  ✗ journal.jsonl not found");
+        println!("    → run `context-os init` to create append-only hook journal");
+        all_ok = false;
     }
 
-    // Test log benchmark
-    let before_test = estimate_text(sample_test_log, ModelFamily::Claude).estimated_tokens;
-    if let Some(result) = registry.reduce(
-        ReducerKind::TestLog,
-        sample_test_log,
-        ReductionMode::Safe,
-        &protections,
-    ) {
-        let after_test = estimate_text(&result.output, ModelFamily::Claude).estimated_tokens;
-        if before_test > 0 {
-            let pct = ((before_test as f64 - after_test as f64) / before_test as f64 * 100.0) as u32;
-            println!("    Test log:    {before_test} \u{2192} {after_test} tokens ({pct}% reduction)");
-        }
+    // 8. handoff.md
+    let handoff_path = context_dir.join("handoff.md");
+    if handoff_path.exists() {
+        println!("  ✓ handoff.md exists");
     } else {
-        println!("    Test log:    reducer not available");
+        println!("  - handoff.md not found yet (created after the first stop/handoff)");
     }
 
-    // Final status
+    // 9. restart packet generation
+    if session_path.exists() {
+        match StructuredSessionMemory::load_from_path(&session_path) {
+            Ok(state) => {
+                let packet = build_restart_packet(&state, &RestartPacketPolicy::default());
+                let rendered = render_restart_packet(&packet);
+                if rendered.is_empty() {
+                    println!("  - restart packet currently empty (session state has no captured facts yet)");
+                } else {
+                    let estimate = estimate_text(&rendered, ModelFamily::Claude).estimated_tokens;
+                    println!("  ✓ restart packet renders ({estimate} estimated Claude tokens)");
+                }
+            }
+            Err(err) => {
+                println!("  ✗ failed to render restart packet: {err}");
+                all_ok = false;
+            }
+        }
+    }
+
+    println!("\n  Benchmark reports:");
+    if benchmark_report_passed(&root, "python/evals/reports/safe-mode-report.json")? {
+        println!("    ✓ safe-mode report present and passing");
+    } else {
+        println!("    ✗ safe-mode report missing or failing");
+        println!("      → run `python3 python/evals/runners/safe_mode_runner.py`");
+        all_ok = false;
+    }
+    if benchmark_report_passed(
+        &root,
+        "python/evals/reports/compaction-survival-report.json",
+    )? {
+        println!("    ✓ compaction-survival report present and passing");
+    } else {
+        println!("    ✗ compaction-survival report missing or failing");
+        println!("      → run `python3 python/evals/runners/compaction_survival_runner.py`");
+        all_ok = false;
+    }
+
     if all_ok {
         println!("\n  Status: ready\n");
     } else {
-        println!("\n  Status: needs setup (run `context-os init`)\n");
+        println!("\n  Status: needs attention\n");
     }
 
     Ok(())
 }
 
+fn benchmark_report_passed(root: &Path, relative_path: &str) -> Result<bool> {
+    let path = root.join(relative_path);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let total = value
+        .get("summary")
+        .and_then(|summary| summary.get("total_cases"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let passed = value
+        .get("summary")
+        .and_then(|summary| summary.get("passed_cases"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    Ok(total > 0 && total == passed)
+}
+
 fn run_hook(command: HookCommand) -> Result<()> {
     match command.command {
         HookSubcommand::PreToolUse => run_hook_pre_tool_use(),
+        HookSubcommand::PostToolUse => run_hook_post_tool_use(),
+        HookSubcommand::PreCompact => run_hook_pre_compact(),
     }
 }
 
@@ -1291,8 +1956,7 @@ fn run_hook_pre_tool_use() -> Result<()> {
         .context("failed to read hook event from stdin")?;
 
     // Parse the hook event
-    let event: serde_json::Value =
-        serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+    let event: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
 
     // Extract the tool input command
     let tool_input = event.get("tool_input").unwrap_or(&serde_json::Value::Null);
@@ -1307,8 +1971,7 @@ fn run_hook_pre_tool_use() -> Result<()> {
     }
 
     // Find our own binary path
-    let bin_path = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("context-os"));
+    let bin_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("context-os"));
     let bin = bin_path.display().to_string();
 
     // Wrap the command to pipe output through context-os pipe.
@@ -1331,6 +1994,92 @@ fn run_hook_pre_tool_use() -> Result<()> {
     Ok(())
 }
 
+/// PostToolUse: extract decision signals from tool output and save to session memory.
+/// Detects: test pass/fail, errors that indicate a failed approach, file modifications.
+fn run_hook_post_tool_use() -> Result<()> {
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("failed to read hook event from stdin")?;
+
+    let event: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+
+    let tool_name = event
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let tool_input = event
+        .get("tool_input")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let tool_output = event
+        .get("tool_output")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if tool_output.is_empty() && tool_name != "Edit" && tool_name != "Write" {
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(context_dir) = find_context_dir(&cwd) else {
+        return Ok(());
+    };
+
+    let session_path = context_dir.join("session.json");
+    let mut state = StructuredSessionMemory::load_or_default(&session_path)?;
+    let outcome =
+        process_post_tool_use_event(&mut state, tool_name, &tool_input, tool_output, &cwd);
+
+    if outcome.changed {
+        state.save_to_path(&session_path)?;
+        append_journal_events(&context_dir, &outcome.journal_events)?;
+    }
+
+    Ok(())
+}
+
+/// PreCompact: inject structured decisions into context so they survive compaction.
+/// This is the key differentiator — Claude remembers WHY decisions were made.
+fn run_hook_pre_compact() -> Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(context_dir) = find_context_dir(&cwd) else {
+        return Ok(());
+    };
+
+    let session_path = context_dir.join("session.json");
+    if !session_path.exists() {
+        return Ok(());
+    }
+
+    let state = match StructuredSessionMemory::load_from_path(&session_path) {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+
+    let packet = build_restart_packet(&state, &RestartPacketPolicy::default());
+    let rendered = render_restart_packet(&packet);
+    if rendered.is_empty() {
+        return Ok(());
+    }
+
+    append_journal_events(
+        &context_dir,
+        &[JournalEvent {
+            ts_unix: now_unix(),
+            hook: "PreCompact".to_string(),
+            category: "restart_packet_emitted".to_string(),
+            summary: "Rendered restart packet for compaction survival".to_string(),
+            metadata: serde_json::json!({
+                "estimated_tokens": estimate_text(&rendered, ModelFamily::Claude).estimated_tokens,
+            }),
+        }],
+    )?;
+    print!("{rendered}");
+
+    Ok(())
+}
+
 fn read_file(path: &PathBuf) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))
 }
@@ -1343,4 +2092,194 @@ fn read_session_update(path: &PathBuf) -> Result<SessionMemoryUpdate> {
 
 fn import_session_state_update(input: &str) -> Result<SessionMemoryUpdate> {
     serde_json::from_str(input).context("failed to parse session memory update json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn post_tool_use_records_failing_signatures() {
+        let mut state = StructuredSessionMemory::default();
+        let outcome = process_post_tool_use_event(
+            &mut state,
+            "Bash",
+            &json!({ "command": "cargo test auth::tests::delete_user" }),
+            "test auth::tests::delete_user ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed;",
+            Path::new("/tmp/context-os"),
+        );
+
+        assert!(outcome.changed);
+        assert!(state
+            .failing_signatures
+            .contains(&"auth::tests::delete_user".to_string()));
+        assert_eq!(state.tests_run.len(), 1);
+        assert!(outcome
+            .journal_events
+            .iter()
+            .any(|event| event.category == "failing_signature"));
+    }
+
+    #[test]
+    fn post_tool_use_records_modified_file() {
+        let mut state = StructuredSessionMemory::default();
+        let outcome = process_post_tool_use_event(
+            &mut state,
+            "Edit",
+            &json!({ "file_path": "/tmp/context-os/src/lib.rs" }),
+            "",
+            Path::new("/tmp/context-os"),
+        );
+
+        assert!(outcome.changed);
+        assert_eq!(state.modified_files, vec!["src/lib.rs".to_string()]);
+        assert!(outcome
+            .journal_events
+            .iter()
+            .any(|event| event.category == "modified_file"));
+    }
+
+    #[test]
+    fn post_tool_use_records_decision_after_success() {
+        let mut state = StructuredSessionMemory::default();
+        state
+            .failing_signatures
+            .push("auth::tests::delete_user".to_string());
+        state
+            .failed_approaches
+            .push("error[E0308]: mismatched types".to_string());
+
+        let outcome = process_post_tool_use_event(
+            &mut state,
+            "Bash",
+            &json!({ "command": "cargo test auth::tests::delete_user" }),
+            "test result: ok. 1 passed; 0 failed;",
+            Path::new("/tmp/context-os"),
+        );
+
+        assert!(outcome.changed);
+        assert!(state.failing_signatures.is_empty());
+        assert_eq!(state.decisions_made.len(), 1);
+        assert!(state.decisions_made[0]
+            .summary
+            .contains("Validated current approach"));
+        assert!(outcome
+            .journal_events
+            .iter()
+            .any(|event| event.category == "decision"));
+    }
+
+    #[test]
+    fn restart_packet_preserves_critical_state_under_budget() {
+        let mut state = StructuredSessionMemory::default();
+        state.session_objective = Some("Ship compaction-aware decision replay".to_string());
+        state.current_subtask = Some("Wire PreCompact to shared restart packet".to_string());
+        state.pinned_facts.push(PinnedFact {
+            value: "Never drop the latest accepted decision".to_string(),
+        });
+        state.modified_files = vec![
+            "apps/cli/src/main.rs".to_string(),
+            "hooks/hooks.json".to_string(),
+        ];
+        state.pending_next_actions = vec![NextAction {
+            summary: "Run compaction-survival benchmarks".to_string(),
+        }];
+        state.decisions_made = vec![
+            DecisionRecord {
+                summary: "Initial idea".to_string(),
+                rationale: Some("older rationale".to_string()),
+            },
+            DecisionRecord {
+                summary: "Latest accepted decision".to_string(),
+                rationale: Some("must survive compaction".to_string()),
+            },
+        ];
+        state.failed_approaches = vec![
+            "low-signal note".to_string(),
+            "error[E0308] from apps/cli/src/main.rs".to_string(),
+        ];
+        state.tests_run = (0..10)
+            .map(|idx| CommandRecord {
+                command: format!("cargo test case_{idx}"),
+                outcome: Some("passed".to_string()),
+            })
+            .collect();
+        state.recent_turns = (0..10)
+            .map(|idx| RecentTurn {
+                role: "assistant".to_string(),
+                content: format!("Long recap {idx} {}", "x".repeat(50)),
+            })
+            .collect();
+
+        let packet = build_restart_packet(
+            &state,
+            &RestartPacketPolicy {
+                max_tokens: 120,
+                ..RestartPacketPolicy::default()
+            },
+        );
+        let rendered = render_restart_packet(&packet);
+        let estimate = estimate_text(&rendered, ModelFamily::Claude).estimated_tokens;
+
+        assert!(estimate <= 120);
+        assert_eq!(
+            packet.current_subtask.as_deref(),
+            Some("Wire PreCompact to shared restart packet")
+        );
+        assert!(packet
+            .pinned_facts
+            .iter()
+            .any(|fact| fact.value == "Never drop the latest accepted decision"));
+        assert_eq!(
+            packet
+                .decisions_made
+                .last()
+                .map(|item| item.summary.as_str()),
+            Some("Latest accepted decision")
+        );
+        assert!(packet.recent_turns.is_empty());
+        assert!(packet.tests_run.is_empty());
+    }
+
+    #[test]
+    fn end_to_end_resilience_packet_keeps_decision_file_and_next_step() {
+        let mut state = StructuredSessionMemory::default();
+        state.session_objective = Some("Fix delete_user test".to_string());
+        state.current_subtask = Some("Stabilize failing API test".to_string());
+        state.pending_next_actions = vec![NextAction {
+            summary: "Run the full auth test suite".to_string(),
+        }];
+
+        process_post_tool_use_event(
+            &mut state,
+            "Bash",
+            &json!({ "command": "cargo test api::tests::delete_user" }),
+            "test api::tests::delete_user ... FAILED\nerror[E0308]: mismatched types\ntest result: FAILED. 0 passed; 1 failed;",
+            Path::new("/tmp/context-os"),
+        );
+        process_post_tool_use_event(
+            &mut state,
+            "Edit",
+            &json!({ "file_path": "/tmp/context-os/src/api.rs" }),
+            "",
+            Path::new("/tmp/context-os"),
+        );
+        process_post_tool_use_event(
+            &mut state,
+            "Bash",
+            &json!({ "command": "cargo test api::tests::delete_user" }),
+            "test result: ok. 1 passed; 0 failed;",
+            Path::new("/tmp/context-os"),
+        );
+
+        let packet = build_restart_packet(&state, &RestartPacketPolicy::default());
+        let rendered = render_restart_packet(&packet);
+
+        assert!(rendered.contains("DECISIONS MADE"));
+        assert!(rendered.contains("FAILED APPROACHES TO AVOID"));
+        assert!(rendered.contains("src/api.rs"));
+        assert!(rendered.contains("Run the full auth test suite"));
+        assert!(rendered.contains("Validated current approach"));
+    }
 }

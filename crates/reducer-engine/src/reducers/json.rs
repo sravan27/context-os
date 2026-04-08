@@ -154,7 +154,10 @@ fn compact_array(items: &[Value], depth: usize) -> String {
         if items.len() == 1 {
             return format!("{indent}[{sample}]");
         }
-        let mut lines = vec![format!("{indent}array(len={}, all identical):", items.len())];
+        let mut lines = vec![format!(
+            "{indent}array(len={}, all identical):",
+            items.len()
+        )];
         lines.push(format!("{indent}  sample: {sample}"));
         return lines.join("\n");
     }
@@ -212,8 +215,7 @@ mod tests {
         assert!(
             result.metadata.transformed,
             "JSON reducer should produce a shorter output. before={} after={}",
-            result.metadata.before_tokens,
-            result.metadata.after_tokens
+            result.metadata.before_tokens, result.metadata.after_tokens
         );
     }
 }

@@ -35,3 +35,19 @@
 - Reports:
   `python/evals/reports/safe-mode-report.json`
   `python/evals/reports/safe-mode-report.md`
+- Compaction dataset:
+  `python/evals/datasets/compaction_survival_cases.json`
+- Compaction runner:
+  `python/evals/runners/compaction_survival_runner.py`
+- Compaction reports:
+  `python/evals/reports/compaction-survival-report.json`
+  `python/evals/reports/compaction-survival-report.md`
+
+## Current safe recommendation gates
+
+- Safe reducer protected-string recall: 100%
+- Prompt-linter expected finding recall: 100%
+- Compaction survival pinned-fact retention: 100%
+- Compaction survival current-subtask retention: 100%
+- Compaction survival latest-decision retention: 100%
+- Compaction survival modified-file retention: 100%

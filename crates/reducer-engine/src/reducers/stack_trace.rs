@@ -33,8 +33,9 @@ impl Reducer for StackTraceReducer {
                 .lines()
                 .filter(|line| {
                     let t = line.trim_start();
-                    t.starts_with("0:") || t.chars().next().map_or(false, |c| c.is_ascii_digit())
-                        && t.contains("::")
+                    t.starts_with("0:")
+                        || t.chars().next().map_or(false, |c| c.is_ascii_digit())
+                            && t.contains("::")
                 })
                 .count();
             if numbered_frames >= 3 {
@@ -131,7 +132,9 @@ impl Reducer for StackTraceReducer {
                     let candidate = lines[i + internal_count].trim();
                     // Internal frame lines and their "at" continuation lines
                     if is_internal_frame(candidate)
-                        || (internal_count > 0 && candidate.starts_with("at ") && candidate.contains("/rustc/"))
+                        || (internal_count > 0
+                            && candidate.starts_with("at ")
+                            && candidate.contains("/rustc/"))
                     {
                         internal_count += 1;
                     } else {

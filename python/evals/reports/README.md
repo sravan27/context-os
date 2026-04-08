@@ -6,3 +6,5 @@ Current generated outputs:
 
 - `safe-mode-report.json`
 - `safe-mode-report.md`
+- `compaction-survival-report.json`
+- `compaction-survival-report.md`

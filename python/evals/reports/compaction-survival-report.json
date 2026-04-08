@@ -1,0 +1,48 @@
+{
+  "benchmark": "compaction_survival",
+  "generated_at": "2026-04-08T16:01:56.784544+00:00",
+  "dataset": "python/evals/datasets/compaction_survival_cases.json",
+  "summary": {
+    "total_cases": 2,
+    "passed_cases": 2,
+    "failed_cases": [],
+    "average_decision_retention": 1.0,
+    "average_failed_approach_retention": 0.5,
+    "average_modified_file_retention": 1.0,
+    "average_next_step_retention": 1.0,
+    "average_packet_tokens": 184.0
+  },
+  "cases": [
+    {
+      "name": "resume_packet_preserves_critical_state",
+      "decision_retention": 1.0,
+      "failed_approach_retention": 1.0,
+      "modified_file_retention": 1.0,
+      "next_step_retention": 1.0,
+      "pinned_fact_retention": 1.0,
+      "current_subtask_retention": 1.0,
+      "latest_decision_retention": 1.0,
+      "packet_tokens": 207,
+      "passed": true
+    },
+    {
+      "name": "resume_packet_stays_within_budget_under_noise",
+      "decision_retention": 1.0,
+      "failed_approach_retention": 0.0,
+      "modified_file_retention": 1.0,
+      "next_step_retention": 1.0,
+      "pinned_fact_retention": 1.0,
+      "current_subtask_retention": 1.0,
+      "latest_decision_retention": 1.0,
+      "packet_tokens": 161,
+      "passed": true
+    }
+  ],
+  "gates": {
+    "pinned_fact_retention": "1.0 required",
+    "current_subtask_retention": "1.0 required",
+    "latest_decision_retention": "1.0 required",
+    "modified_file_retention": "1.0 required",
+    "packet_tokens": "must stay within the per-case max_tokens budget"
+  }
+}

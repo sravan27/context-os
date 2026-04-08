@@ -30,8 +30,7 @@ impl Reducer for LintOutputReducer {
         }
 
         // Pylint / flake8: explicit mention or code pattern like C0114, W0611, E0001
-        let pylint_code_re =
-            Regex::new(r"(?m)[CWERFI]\d{4}[:\s]").expect("valid regex");
+        let pylint_code_re = Regex::new(r"(?m)[CWERFI]\d{4}[:\s]").expect("valid regex");
         if input.contains("pylint") || input.contains("flake8") || pylint_code_re.is_match(input) {
             score += 0.4;
         }
@@ -42,8 +41,7 @@ impl Reducer for LintOutputReducer {
         }
 
         // Generic warning:/error: lines (multiple occurrences suggest lint output)
-        let warning_error_re =
-            Regex::new(r"(?m)(?:warning|error):").expect("valid regex");
+        let warning_error_re = Regex::new(r"(?m)(?:warning|error):").expect("valid regex");
         let match_count = warning_error_re.find_iter(input).count();
         if match_count >= 3 {
             score += 0.3;
@@ -85,30 +83,20 @@ impl Reducer for LintOutputReducer {
         }
 
         // Regex for lines that start error/warning blocks (clippy, rustc, eslint, etc.)
-        let error_start_re = Regex::new(
-            r"(?i)^(?:error\[|error:|error TS|error!)"
-        ).expect("valid regex");
-        let warning_start_re = Regex::new(
-            r"(?i)^(?:warning\[|warning:)"
-        ).expect("valid regex");
-        let command_re = Regex::new(
-            r"^(?:\$\s|>\s)"
-        ).expect("valid regex");
+        let error_start_re =
+            Regex::new(r"(?i)^(?:error\[|error:|error TS|error!)").expect("valid regex");
+        let warning_start_re = Regex::new(r"(?i)^(?:warning\[|warning:)").expect("valid regex");
+        let command_re = Regex::new(r"^(?:\$\s|>\s)").expect("valid regex");
         let summary_re = Regex::new(
             r"(?i)^(?:error: aborting|error aborting|For more information|found \d+|generated \d+|\d+ warnings?|\d+ errors?|warning: .* generated \d+|could not compile|finished)"
         ).expect("valid regex");
         // Clippy warning rule extractor: warning[clippy::foo] or warning: `unused_import`
-        let clippy_rule_re = Regex::new(
-            r"warning\[([^\]]+)\]"
-        ).expect("valid regex");
+        let clippy_rule_re = Regex::new(r"warning\[([^\]]+)\]").expect("valid regex");
         // Context lines in rustc/clippy output
-        let context_line_re = Regex::new(
-            r"^\s*(?:-->|= note:|= help:|help:|note:|\||\d+\s*\|)"
-        ).expect("valid regex");
+        let context_line_re = Regex::new(r"^\s*(?:-->|= note:|= help:|help:|note:|\||\d+\s*\|)")
+            .expect("valid regex");
         // File location line: --> src/foo.rs:12:5
-        let location_re = Regex::new(
-            r"-->\s+(\S+:\d+:\d+)"
-        ).expect("valid regex");
+        let location_re = Regex::new(r"-->\s+(\S+:\d+:\d+)").expect("valid regex");
 
         // ---- First pass: parse warnings into groups ----
         // We track each warning by its rule name and accumulate locations.
@@ -185,8 +173,7 @@ impl Reducer for LintOutputReducer {
             if let Some(ref mut block) = current_block {
                 if context_line_re.is_match(trimmed)
                     || trimmed.is_empty()
-                    || (trimmed.starts_with(|c: char| c.is_ascii_digit())
-                        && trimmed.contains('|'))
+                    || (trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains('|'))
                     || trimmed.starts_with("  ")
                     || trimmed.starts_with('\t')
                 {
@@ -240,7 +227,10 @@ impl Reducer for LintOutputReducer {
                 if !warning_groups.contains_key(&block.rule) {
                     warning_order.push(block.rule.clone());
                 }
-                warning_groups.entry(block.rule.clone()).or_default().push(block);
+                warning_groups
+                    .entry(block.rule.clone())
+                    .or_default()
+                    .push(block);
             }
         }
 
@@ -277,15 +267,9 @@ impl Reducer for LintOutputReducer {
                 let loc_summary = if locations.is_empty() {
                     format!("{} more occurrences", group.len() - 1)
                 } else {
-                    format!(
-                        "{} more: {}",
-                        group.len() - 1,
-                        locations.join(", ")
-                    )
+                    format!("{} more: {}", group.len() - 1, locations.join(", "))
                 };
-                kept.push(format!(
-                    "[context-os] {rule}: {loc_summary} (collapsed)"
-                ));
+                kept.push(format!("[context-os] {rule}: {loc_summary} (collapsed)"));
             }
         }
 
@@ -340,7 +324,9 @@ impl Reducer for LintOutputReducer {
             explanation,
             vec![ProvenanceNote {
                 reason: "lint-collapse".to_string(),
-                detail: "Duplicate warnings collapsed to counts; errors and unique warnings preserved".to_string(),
+                detail:
+                    "Duplicate warnings collapsed to counts; errors and unique warnings preserved"
+                        .to_string(),
             }],
         );
 
@@ -410,7 +396,9 @@ mod tests {
         );
         // Summary line preserved
         assert!(
-            result.output.contains("generated") || result.output.contains("aborting") || result.output.contains("warnings"),
+            result.output.contains("generated")
+                || result.output.contains("aborting")
+                || result.output.contains("warnings"),
             "Summary line should be preserved"
         );
         // Token reduction happened

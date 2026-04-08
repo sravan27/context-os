@@ -35,8 +35,7 @@ impl Reducer for BuildLogReducer {
 
         // Webpack / vite
         if input.contains("webpack compiled")
-            || input.contains("vite")
-                && (input.contains("build") || input.contains("transforming"))
+            || input.contains("vite") && (input.contains("build") || input.contains("transforming"))
         {
             score += 0.45;
         }
@@ -55,14 +54,16 @@ impl Reducer for BuildLogReducer {
         }
 
         // Gradle
-        if input.contains("> Task :") || input.contains("BUILD SUCCESSFUL")
+        if input.contains("> Task :")
+            || input.contains("BUILD SUCCESSFUL")
             || input.contains("BUILD FAILED")
         {
             score += 0.45;
         }
 
         // Maven
-        if input.contains("[INFO] Building ") || input.contains("[INFO] BUILD ")
+        if input.contains("[INFO] Building ")
+            || input.contains("[INFO] BUILD ")
             || input.contains("[ERROR]")
         {
             score += 0.4;
@@ -121,28 +122,23 @@ impl Reducer for BuildLogReducer {
             );
         }
 
-        let compiling_regex =
-            Regex::new(r"^\s*Compiling\s+\S+\s+v[\d.]+").expect("valid regex");
-        let downloading_regex =
-            Regex::new(r"^\s*Downloading\s+").expect("valid regex");
-        let progress_regex =
-            Regex::new(r"^\s*[\[#=>\-\s\]]{5,}\s*\d*%?").expect("valid regex");
-        let spinner_regex =
-            Regex::new(r"^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\-\\]").expect("valid regex");
+        let compiling_regex = Regex::new(r"^\s*Compiling\s+\S+\s+v[\d.]+").expect("valid regex");
+        let downloading_regex = Regex::new(r"^\s*Downloading\s+").expect("valid regex");
+        let progress_regex = Regex::new(r"^\s*[\[#=>\-\s\]]{5,}\s*\d*%?").expect("valid regex");
+        let spinner_regex = Regex::new(r"^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\-\\]").expect("valid regex");
         let npm_install_regex =
             Regex::new(r"^(?:added|removed|changed)\s+\d+\s+packages?").expect("valid regex");
-        let chunk_regex =
-            Regex::new(r"^\s*[\w./\-]+\s+\d+(?:\.\d+)?\s*(?:kB|KB|MB|bytes)\b").expect("valid regex");
-        let webpack_chunk_regex =
-            Regex::new(r"^\s*(?:asset|chunk)\s+").expect("valid regex");
-        let vite_transform_regex =
-            Regex::new(r"^\s*transforming\s+\(\d+\)").expect("valid regex");
+        let chunk_regex = Regex::new(r"^\s*[\w./\-]+\s+\d+(?:\.\d+)?\s*(?:kB|KB|MB|bytes)\b")
+            .expect("valid regex");
+        let webpack_chunk_regex = Regex::new(r"^\s*(?:asset|chunk)\s+").expect("valid regex");
+        let vite_transform_regex = Regex::new(r"^\s*transforming\s+\(\d+\)").expect("valid regex");
         let summary_regex = Regex::new(
             r"(?i)^(?:error\[|error:|error TS|error!|warning\[|warning:|warn |error aborting|For more information|BUILD SUCCESSFUL|BUILD FAILED|\[INFO\] BUILD |\[ERROR\]|webpack compiled|Successfully compiled|✓ |✗ |failed to compile|Finished|Caused by)"
         ).expect("valid regex");
         let command_regex = Regex::new(
-            r"^(?:\$\s|>\s)?(?:cargo|npm|pnpm|yarn|npx|go|gradle|gradlew|mvn|tsc|webpack|vite)\b"
-        ).expect("valid regex");
+            r"^(?:\$\s|>\s)?(?:cargo|npm|pnpm|yarn|npx|go|gradle|gradlew|mvn|tsc|webpack|vite)\b",
+        )
+        .expect("valid regex");
 
         let mut kept = Vec::new();
         let mut compiling_count = 0usize;
@@ -186,7 +182,10 @@ impl Reducer for BuildLogReducer {
                 || trimmed.starts_with("| ")
                 || trimmed.starts_with("|")
                     && trimmed.len() > 1
-                    && trimmed.chars().nth(1).map_or(false, |c| c == ' ' || c == '^')
+                    && trimmed
+                        .chars()
+                        .nth(1)
+                        .map_or(false, |c| c == ' ' || c == '^')
             {
                 in_error_block = true;
                 kept.push(line.to_string());
@@ -195,8 +194,7 @@ impl Reducer for BuildLogReducer {
 
             // Rustc error context: lines starting with line numbers
             if in_error_block
-                && (trimmed.starts_with(|c: char| c.is_ascii_digit())
-                    || trimmed.starts_with("..."))
+                && (trimmed.starts_with(|c: char| c.is_ascii_digit()) || trimmed.starts_with("..."))
             {
                 kept.push(line.to_string());
                 continue;
@@ -390,7 +388,9 @@ mod tests {
         assert!(result.output.contains("warning[unused_imports]"));
         assert!(result.output.contains("warning[dead_code]"));
         // Final summary preserved
-        assert!(result.output.contains("error: aborting due to 2 previous errors"));
+        assert!(result
+            .output
+            .contains("error: aborting due to 2 previous errors"));
         assert!(result.output.contains("For more information"));
         // Compiling lines collapsed
         assert!(result.output.contains("crates compiled"));

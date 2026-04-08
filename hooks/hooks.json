@@ -11,13 +11,57 @@
       ]
     }
   ],
+  "PostToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "context-os hook post-tool-use",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "context-os hook post-tool-use",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Write",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "context-os hook post-tool-use",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "PreCompact": [
+    {
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "context-os hook pre-compact 2>/dev/null || true",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
   "SessionStart": [
     {
       "matcher": "",
       "hooks": [
         {
           "type": "command",
-          "command": "cat .context-os/handoff.md 2>/dev/null || true",
+          "command": "context-os resume 2>/dev/null || cat .context-os/handoff.md 2>/dev/null || true",
           "timeout": 5
         }
       ]
