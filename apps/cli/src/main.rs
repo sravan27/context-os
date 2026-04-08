@@ -1937,15 +1937,115 @@ const REDUCIBLE_PREFIXES: &[&str] = &[
     "mvn compile",
 ];
 
+/// Extract the "real" command from a shell line, stripping common prefixes:
+///   cd /path &&, source ... &&, env VAR=val, VAR=val, timeout N
+fn extract_core_command(cmd: &str) -> &str {
+    let mut s = cmd.trim();
+
+    // Strip chained prefixes: "cd /foo && source bar && cargo test" → "cargo test"
+    loop {
+        let before = s;
+
+        // Strip "cd ... &&" or "pushd ... &&"
+        if s.starts_with("cd ") || s.starts_with("pushd ") {
+            if let Some(pos) = s.find("&&") {
+                s = s[pos + 2..].trim();
+                continue;
+            }
+        }
+
+        // Strip "source ... &&" or ". ... &&"
+        if s.starts_with("source ") || s.starts_with(". ") {
+            if let Some(pos) = s.find("&&") {
+                s = s[pos + 2..].trim();
+                continue;
+            }
+        }
+
+        // Strip "env " prefix
+        if let Some(rest) = s.strip_prefix("env ") {
+            s = rest.trim();
+            continue;
+        }
+
+        // Strip "timeout N " prefix
+        if s.starts_with("timeout ") {
+            let parts: Vec<&str> = s.splitn(3, ' ').collect();
+            if parts.len() >= 3 {
+                // parts[1] should be a number
+                if parts[1].parse::<u64>().is_ok() {
+                    s = parts[2].trim();
+                    continue;
+                }
+            }
+        }
+
+        // Strip leading VAR=val (e.g., RUST_BACKTRACE=1, CI=true, NODE_ENV=test)
+        if let Some(eq_pos) = s.find('=') {
+            let before_eq = &s[..eq_pos];
+            // Env var names: uppercase letters, digits, underscores, must start with letter/_
+            if !before_eq.is_empty()
+                && before_eq
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && before_eq
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            {
+                // Find the end of the value (next unquoted space)
+                let after_eq = &s[eq_pos + 1..];
+                if let Some(space_pos) = find_unquoted_space(after_eq) {
+                    s = after_eq[space_pos..].trim();
+                    continue;
+                }
+            }
+        }
+
+        if std::ptr::eq(s, before) {
+            break;
+        }
+    }
+
+    s
+}
+
+/// Find the first space not inside quotes.
+fn find_unquoted_space(s: &str) -> Option<usize> {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == '\'' && !in_double {
+            in_single = !in_single;
+        } else if c == '"' && !in_single {
+            in_double = !in_double;
+        } else if c == ' ' && !in_single && !in_double {
+            return Some(i);
+        }
+    }
+    None
+}
+
 fn should_wrap_command(cmd: &str) -> bool {
     let trimmed = cmd.trim();
     // Skip if already piped through context-os
     if trimmed.contains("context-os") {
         return false;
     }
-    // Match against known reducible command patterns
+
+    let core = extract_core_command(trimmed);
+
     for prefix in REDUCIBLE_PREFIXES {
-        if trimmed.starts_with(prefix) {
+        if core.starts_with(prefix) {
             return true;
         }
     }
@@ -1980,9 +2080,9 @@ fn run_hook_pre_tool_use() -> Result<()> {
 
     // Wrap the command to pipe output through context-os pipe.
     // Preserve the original exit code so Claude sees test failures correctly.
-    // Use $() to capture output, then pipe through reducer.
+    // FAIL-OPEN: if context-os pipe crashes, fall back to printing raw output.
     let wrapped = format!(
-        r#"_co_rc=0; _co_out=$({command} 2>&1) || _co_rc=$?; printf '%s\n' "$_co_out" | "{bin}" pipe; exit "$_co_rc""#
+        r#"_co_rc=0; _co_out=$({command} 2>&1) || _co_rc=$?; printf '%s\n' "$_co_out" | "{bin}" pipe 2>/dev/null || printf '%s\n' "$_co_out"; exit "$_co_rc""#
     );
 
     // Output the PreToolUse response — must include updatedInput to replace the command.
@@ -2332,5 +2432,43 @@ mod tests {
         assert!(rendered.contains("src/api.rs"));
         assert!(rendered.contains("Run the full auth test suite"));
         assert!(rendered.contains("Validated current approach"));
+    }
+
+    #[test]
+    fn should_wrap_handles_cd_and_env_prefixes() {
+        // Bare commands
+        assert!(should_wrap_command("cargo test"));
+        assert!(should_wrap_command("npm run build"));
+        assert!(should_wrap_command("pytest -v"));
+
+        // cd && prefixes (how Claude actually runs commands)
+        assert!(should_wrap_command("cd /tmp && cargo test"));
+        assert!(should_wrap_command("cd src && npm test"));
+        assert!(should_wrap_command("cd /app && python -m pytest tests/"));
+
+        // Environment variable prefixes
+        assert!(should_wrap_command("RUST_BACKTRACE=1 cargo test"));
+        assert!(should_wrap_command("CI=true npm run build"));
+        assert!(should_wrap_command("NODE_ENV=test npm test"));
+
+        // Combined: cd + env
+        assert!(should_wrap_command("cd /foo && RUST_LOG=debug cargo clippy"));
+
+        // source/env/timeout prefixes
+        assert!(should_wrap_command("source ~/.cargo/env && cargo build"));
+        assert!(should_wrap_command("env NODE_ENV=test npm test"));
+        assert!(should_wrap_command("timeout 120 cargo test"));
+
+        // Should NOT wrap
+        assert!(!should_wrap_command("ls -la"));
+        assert!(!should_wrap_command("git status"));
+        assert!(!should_wrap_command("echo hello"));
+        assert!(!should_wrap_command("cat file.txt"));
+
+        // Already wrapped
+        assert!(!should_wrap_command("context-os pipe"));
+        assert!(!should_wrap_command(
+            "cd /foo && cargo test 2>&1 | context-os pipe"
+        ));
     }
 }
