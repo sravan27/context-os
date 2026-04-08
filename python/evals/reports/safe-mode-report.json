@@ -1,6 +1,6 @@
 {
   "benchmark": "safe_mode",
-  "generated_at": "2026-04-08T16:00:33.932143+00:00",
+  "generated_at": "2026-04-08T16:47:21.053744+00:00",
   "dataset": "python/evals/datasets/safe_mode_cases.json",
   "summary": {
     "total_cases": 7,

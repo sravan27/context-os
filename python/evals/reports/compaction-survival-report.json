@@ -1,6 +1,6 @@
 {
   "benchmark": "compaction_survival",
-  "generated_at": "2026-04-08T16:01:56.784544+00:00",
+  "generated_at": "2026-04-08T16:47:29.834491+00:00",
   "dataset": "python/evals/datasets/compaction_survival_cases.json",
   "summary": {
     "total_cases": 2,

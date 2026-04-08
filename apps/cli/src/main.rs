@@ -681,9 +681,13 @@ fn run_resume(args: ResumeArgs) -> Result<()> {
     policy.max_tokens = args.max_tokens;
     let packet = build_restart_packet(&state, &policy);
     let rendered = render_restart_packet(&packet);
-    if !rendered.is_empty() {
-        print!("{rendered}");
+    if rendered.is_empty() {
+        return Ok(());
     }
+
+    // When used as SessionStart hook, Claude Code captures stdout.
+    // Plain text output becomes additionalContext for the session.
+    print!("{rendered}");
     Ok(())
 }
 
@@ -1981,13 +1985,20 @@ fn run_hook_pre_tool_use() -> Result<()> {
         r#"_co_rc=0; _co_out=$({command} 2>&1) || _co_rc=$?; printf '%s\n' "$_co_out" | "{bin}" pipe; exit "$_co_rc""#
     );
 
-    // Output the PreToolUse response
+    // Output the PreToolUse response — must include updatedInput to replace the command.
+    // Preserve any other tool_input fields (description, timeout, etc.)
+    let mut updated_input = tool_input.clone();
+    if let Some(obj) = updated_input.as_object_mut() {
+        obj.insert(
+            "command".to_string(),
+            serde_json::Value::String(wrapped),
+        );
+    }
+
     let response = serde_json::json!({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "updatedInput": {
-                "command": wrapped
-            }
+            "updatedInput": updated_input
         }
     });
     println!("{}", serde_json::to_string(&response)?);
@@ -1996,6 +2007,10 @@ fn run_hook_pre_tool_use() -> Result<()> {
 
 /// PostToolUse: extract decision signals from tool output and save to session memory.
 /// Detects: test pass/fail, errors that indicate a failed approach, file modifications.
+///
+/// Claude Code sends tool_response (not tool_output) with structure:
+///   Bash: { "stdout": "...", "stderr": "...", "exitCode": 0 }
+///   Edit/Write: { "filePath": "...", "success": true }
 fn run_hook_post_tool_use() -> Result<()> {
     let mut input = String::new();
     std::io::stdin()
@@ -2012,16 +2027,39 @@ fn run_hook_post_tool_use() -> Result<()> {
         .get("tool_input")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
-    let tool_output = event
-        .get("tool_output")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+
+    // Claude Code sends tool_response (structured), not tool_output (flat string).
+    // For Bash: { stdout, stderr, exitCode }
+    // For Edit/Write: { filePath, success }
+    // Fall back to tool_output for backwards compat / testing.
+    let tool_response = event.get("tool_response");
+    let tool_output: String = if let Some(resp) = tool_response {
+        // Bash tool: combine stdout + stderr
+        let stdout = resp.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = resp.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+        if !stderr.is_empty() {
+            format!("{stdout}\n{stderr}")
+        } else {
+            stdout.to_string()
+        }
+    } else {
+        // Fallback: flat tool_output string (testing / older versions)
+        event
+            .get("tool_output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
 
     if tool_output.is_empty() && tool_name != "Edit" && tool_name != "Write" {
         return Ok(());
     }
 
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = event
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let Some(context_dir) = find_context_dir(&cwd) else {
         return Ok(());
     };
@@ -2029,7 +2067,7 @@ fn run_hook_post_tool_use() -> Result<()> {
     let session_path = context_dir.join("session.json");
     let mut state = StructuredSessionMemory::load_or_default(&session_path)?;
     let outcome =
-        process_post_tool_use_event(&mut state, tool_name, &tool_input, tool_output, &cwd);
+        process_post_tool_use_event(&mut state, tool_name, &tool_input, &tool_output, &cwd);
 
     if outcome.changed {
         state.save_to_path(&session_path)?;
@@ -2041,8 +2079,21 @@ fn run_hook_post_tool_use() -> Result<()> {
 
 /// PreCompact: inject structured decisions into context so they survive compaction.
 /// This is the key differentiator — Claude remembers WHY decisions were made.
+///
+/// Claude Code PreCompact hooks receive: { session_id, cwd, hook_event_name, matcher_value }
+/// Output is plain text to stdout — Claude Code captures it as additionalContext.
 fn run_hook_pre_compact() -> Result<()> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Read stdin (Claude Code sends event JSON, but we only need cwd)
+    let mut input = String::new();
+    let _ = std::io::stdin().read_to_string(&mut input);
+    let event: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
+
+    let cwd = event
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
     let Some(context_dir) = find_context_dir(&cwd) else {
         return Ok(());
     };
