@@ -1154,14 +1154,38 @@ fn append_journal_events(context_dir: &Path, events: &[JournalEvent]) -> Result<
 }
 
 fn looks_like_failure(output: &str) -> bool {
-    let lower = output.to_ascii_lowercase();
-    lower.contains("test result: failed")
-        || lower.contains("failed")
-        || lower.contains("panic")
-        || lower.contains("error:")
-        || lower.contains("error[")
-        || lower.contains("compilation failed")
-        || lower.contains("build failed")
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        // Definitive failure markers (line-level to avoid false positives on "0 failed")
+        if lower.contains("test result: failed")
+            || lower.starts_with("error:")
+            || lower.starts_with("error[")
+            || lower.contains("compilation failed")
+            || lower.contains("build failed")
+            || lower.contains("panicked at")
+            || (trimmed.starts_with("test ") && trimmed.ends_with("... FAILED"))
+            || trimmed.starts_with("FAIL ")
+            || trimmed.starts_with("FAILED ")
+            || trimmed.starts_with("✗ ")
+            || trimmed.starts_with("✘ ")
+            || trimmed.starts_with("× ")
+        {
+            return true;
+        }
+        // "N failed" where N > 0 (catches "1 failed", "Tests: 3 failed")
+        if let Some(pos) = lower.find("failed") {
+            let before = lower[..pos].trim();
+            if let Some(last_word) = before.rsplit_once(|c: char| !c.is_ascii_digit()).map(|(_, n)| n) {
+                if let Ok(n) = last_word.parse::<u32>() {
+                    if n > 0 {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn looks_like_success(output: &str) -> bool {
@@ -1173,12 +1197,14 @@ fn looks_like_success(output: &str) -> bool {
         || lower.contains("finished dev")
         || lower.contains("0 failed")
         || lower.contains("compiled successfully")
+        || lower.contains("all tests passed")
 }
 
 fn extract_failing_signatures(output: &str) -> Vec<String> {
     let mut signatures = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
+        // Rust: "test foo::bar ... FAILED"
         if trimmed.starts_with("test ") && trimmed.ends_with("... FAILED") {
             signatures.push(
                 trimmed
@@ -1186,10 +1212,21 @@ fn extract_failing_signatures(output: &str) -> Vec<String> {
                     .trim_end_matches(" ... FAILED")
                     .to_string(),
             );
+        // Jest: "FAIL src/tests/foo.test.ts"
         } else if trimmed.starts_with("FAIL ") {
-            signatures.push(trimmed.trim_start_matches("FAIL ").to_string());
+            signatures.push(trimmed.trim_start_matches("FAIL ").trim().to_string());
+        // Vitest: "✗ src/services/api.test.ts" or "× ..."
+        } else if trimmed.starts_with("✗ ") || trimmed.starts_with("× ") || trimmed.starts_with("✘ ") {
+            let sig = trimmed[trimmed.char_indices().nth(1).map_or(0, |(i, _)| i)..].trim();
+            if !sig.is_empty() {
+                signatures.push(sig.to_string());
+            }
+        // Rust panic
         } else if trimmed.contains("panicked at") && trimmed.contains("::") {
             signatures.push(trimmed.to_string());
+        // pytest: "FAILED tests/test_foo.py::test_bar"
+        } else if trimmed.starts_with("FAILED ") {
+            signatures.push(trimmed.trim_start_matches("FAILED ").trim().to_string());
         }
     }
     signatures
@@ -1908,33 +1945,67 @@ fn run_hook(command: HookCommand) -> Result<()> {
 
 /// Patterns that produce output worth reducing.
 const REDUCIBLE_PREFIXES: &[&str] = &[
+    // Rust
     "cargo test",
     "cargo build",
     "cargo clippy",
     "cargo check",
+    // Node / npm
     "npm test",
     "npm run test",
     "npm run build",
+    "npm install",
+    "npm ci",
+    // pnpm
     "pnpm test",
     "pnpm run test",
     "pnpm run build",
+    "pnpm install",
+    // yarn
     "yarn test",
     "yarn build",
+    "yarn install",
+    // npx runners
+    "npx jest",
+    "npx vitest",
+    "npx tsc",
+    "npx eslint",
+    // bun
+    "bun test",
+    "bun run test",
+    "bun run build",
+    "bun install",
+    // deno
+    "deno test",
+    // Python
     "pytest",
     "python -m pytest",
     "python3 -m pytest",
+    "pip install",
+    "pip3 install",
+    // Go
     "go test",
     "go build",
+    // Make
     "make test",
     "make build",
     "make check",
-    "npx tsc",
-    "npx eslint",
+    // Linters
     "eslint",
+    // JVM
     "gradle build",
     "gradle test",
     "mvn test",
     "mvn compile",
+    // .NET
+    "dotnet test",
+    "dotnet build",
+    // Swift
+    "swift test",
+    "swift build",
+    // Flutter/Dart
+    "flutter test",
+    "dart test",
 ];
 
 /// Extract the "real" command from a shell line, stripping common prefixes:

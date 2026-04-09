@@ -23,6 +23,12 @@ impl Reducer for TestLogReducer {
         if input.contains("AssertionError") || input.contains("expected") {
             score += 0.2;
         }
+        // Vitest output
+        if input.contains("✓ ") && input.contains("✗ ")
+            || input.contains("Test Files")
+        {
+            score += 0.5;
+        }
         // Rust test output
         if input.contains("test result: ok.")
             || input.contains("test result: FAILED")
@@ -75,7 +81,7 @@ impl Reducer for TestLogReducer {
         let pass_regex = Regex::new(r"^(?:PASS|ok)\s+(.+)$").expect("valid regex");
         let symbol_pass_regex = Regex::new(r"^\s*[✓✔]\s+(.+)$").expect("valid regex");
         let summary_regex = Regex::new(
-            r"^(?:Test Suites:|Tests:|Snapshots:|Time:|Ran all test suites|test result:)",
+            r"^(?:Test Suites:|Tests:|Snapshots:|Time:|Ran all test suites|test result:|Test Files\s|Duration\s)",
         )
         .expect("valid regex");
 
@@ -120,6 +126,9 @@ impl Reducer for TestLogReducer {
                 || trimmed.starts_with("ERROR ")
                 || trimmed.starts_with("FAILED")
                 || (trimmed.starts_with("test ") && trimmed.ends_with(" ... FAILED"))
+                || trimmed.starts_with("✗ ")
+                || trimmed.starts_with("× ")
+                || trimmed.starts_with("✘ ")
             {
                 in_fail_block = true;
                 kept.push(line.to_string());
