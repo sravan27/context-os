@@ -1456,10 +1456,21 @@ fn process_post_tool_use_event(
 }
 
 fn run_pipe(args: PipeArgs) -> Result<()> {
-    let mut input = String::new();
+    let mut raw = Vec::new();
     std::io::stdin()
-        .read_to_string(&mut input)
+        .read_to_end(&mut raw)
         .context("failed to read stdin")?;
+
+    // If input is not valid UTF-8 (binary output), pass through unchanged
+    let input = match String::from_utf8(raw) {
+        Ok(s) => s,
+        Err(e) => {
+            // Binary data — pass through and exit successfully
+            use std::io::Write;
+            std::io::stdout().write_all(e.as_bytes())?;
+            return Ok(());
+        }
+    };
 
     if input.trim().is_empty() {
         return Ok(());
@@ -1897,23 +1908,27 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
         }
     }
 
-    println!("\n  Benchmark reports:");
-    if benchmark_report_passed(&root, "python/evals/reports/safe-mode-report.json")? {
-        println!("    ✓ safe-mode report present and passing");
-    } else {
-        println!("    ✗ safe-mode report missing or failing");
-        println!("      → run `python3 python/evals/runners/safe_mode_runner.py`");
-        all_ok = false;
-    }
-    if benchmark_report_passed(
-        &root,
-        "python/evals/reports/compaction-survival-report.json",
-    )? {
-        println!("    ✓ compaction-survival report present and passing");
-    } else {
-        println!("    ✗ compaction-survival report missing or failing");
-        println!("      → run `python3 python/evals/runners/compaction_survival_runner.py`");
-        all_ok = false;
+    // Benchmark reports only apply inside the context-os development repo
+    let evals_dir = root.join("python").join("evals").join("reports");
+    if evals_dir.is_dir() {
+        println!("\n  Benchmark reports:");
+        if benchmark_report_passed(&root, "python/evals/reports/safe-mode-report.json")? {
+            println!("    ✓ safe-mode report present and passing");
+        } else {
+            println!("    ✗ safe-mode report missing or failing");
+            println!("      → run `python3 python/evals/runners/safe_mode_runner.py`");
+            all_ok = false;
+        }
+        if benchmark_report_passed(
+            &root,
+            "python/evals/reports/compaction-survival-report.json",
+        )? {
+            println!("    ✓ compaction-survival report present and passing");
+        } else {
+            println!("    ✗ compaction-survival report missing or failing");
+            println!("      → run `python3 python/evals/runners/compaction_survival_runner.py`");
+            all_ok = false;
+        }
     }
 
     if all_ok {
