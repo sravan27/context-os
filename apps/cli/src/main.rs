@@ -1190,14 +1190,26 @@ fn looks_like_failure(output: &str) -> bool {
 
 fn looks_like_success(output: &str) -> bool {
     let lower = output.to_ascii_lowercase();
-    lower.contains("test result: ok")
-        || lower.contains("tests passed")
+    // Explicit success markers
+    if lower.contains("test result: ok")
         || lower.contains("build succeeded")
         || lower.contains("finished `")
         || lower.contains("finished dev")
-        || lower.contains("0 failed")
         || lower.contains("compiled successfully")
         || lower.contains("all tests passed")
+    {
+        return true;
+    }
+    // "N passed" without any failure indicators
+    // Catches Jest "Tests: 3 passed, 3 total", Vitest "Tests 15 passed (15)", pytest "3 passed"
+    if lower.contains("passed") && !looks_like_failure(output) {
+        return true;
+    }
+    // "0 failed" (but only if no actual failures detected)
+    if lower.contains("0 failed") && !looks_like_failure(output) {
+        return true;
+    }
+    false
 }
 
 fn extract_failing_signatures(output: &str) -> Vec<String> {
