@@ -1,6 +1,6 @@
 # Safe Mode Benchmark Report
 
-- Generated at: `2026-04-09T15:07:33.274236+00:00`
+- Generated at: `2026-04-09T15:15:42.937242+00:00`
 - Dataset: `python/evals/datasets/safe_mode_cases.json`
 - Passed cases: `7/7`
 

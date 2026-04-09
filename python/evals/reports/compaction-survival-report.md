@@ -1,6 +1,6 @@
 # Compaction Survival Benchmark Report
 
-- Generated at: `2026-04-09T15:07:35.349259+00:00`
+- Generated at: `2026-04-09T15:15:45.046668+00:00`
 - Dataset: `python/evals/datasets/compaction_survival_cases.json`
 - Passed cases: `2/2`
 

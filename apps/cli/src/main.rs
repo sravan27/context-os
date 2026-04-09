@@ -766,6 +766,56 @@ fn find_context_dir(start: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Advisory file lock on session.json to prevent concurrent PostToolUse hooks
+/// from clobbering each other. Uses a lockfile with spin-retry.
+/// Lock is released when the returned guard is dropped.
+struct SessionLock {
+    _file: fs::File,
+    path: PathBuf,
+}
+
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_session_lock(context_dir: &Path) -> Result<SessionLock> {
+    let lock_path = context_dir.join("session.lock");
+    // Spin with backoff, max ~2 seconds total
+    for attempt in 0..20 {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => {
+                return Ok(SessionLock {
+                    _file: file,
+                    path: lock_path,
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Check if lock is stale (older than 10 seconds — hook timeout is 5s)
+                if let Ok(meta) = fs::metadata(&lock_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(age) = modified.elapsed() {
+                            if age.as_secs() > 10 {
+                                let _ = fs::remove_file(&lock_path);
+                                continue;
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+            }
+            Err(e) => return Err(e).context("failed to create session lock"),
+        }
+    }
+    // Give up after ~2 seconds — proceed without lock rather than blocking forever
+    anyhow::bail!("could not acquire session lock after retries")
+}
+
 fn build_restart_packet(
     state: &StructuredSessionMemory,
     policy: &RestartPacketPolicy,
@@ -2263,6 +2313,12 @@ fn run_hook_post_tool_use() -> Result<()> {
     };
 
     let session_path = context_dir.join("session.json");
+
+    // Lock session.json for atomic read-modify-write.
+    // Claude Code fires PostToolUse hooks concurrently for parallel tool calls.
+    // Without locking, concurrent reads get the same state and one write overwrites the other.
+    let _lock = acquire_session_lock(&context_dir).ok();
+
     let mut state = StructuredSessionMemory::load_or_default(&session_path)?;
     let outcome =
         process_post_tool_use_event(&mut state, tool_name, &tool_input, &tool_output, &cwd);
@@ -2272,6 +2328,7 @@ fn run_hook_post_tool_use() -> Result<()> {
         append_journal_events(&context_dir, &outcome.journal_events)?;
     }
 
+    // Lock released when _lock is dropped
     Ok(())
 }
 
