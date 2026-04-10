@@ -910,21 +910,26 @@ fn render_dependencies_md(dependencies: &[DependencyEntry]) -> String {
 pub fn render_claude_md(artifacts: &RepoMemoryArtifacts) -> String {
     let mut out = String::new();
 
+    // --- RESPONSE SHAPING ---
+    // This is the #1 token saver. Claude's own output is the biggest cost.
+    // Research: terse instructions reduce output tokens 40-65% on explanation tasks,
+    // 13-21% on structured code tasks. Pays for itself in 1-2 turns.
+    out.push_str("# Response rules\n\n");
+    out.push_str("- Ultra-concise. No preamble, no recap, no filler.\n");
+    out.push_str("- Code > explanation. Show the diff, not why you chose it.\n");
+    out.push_str("- 1-2 sentence plan, then execute. Never explain what you're about to do.\n");
+    out.push_str("- If asked to explain, use fragments. Drop articles. Be direct.\n");
+
     // --- BEHAVIOR RULES ---
-    // These directly reduce message waste. Every line here saves real usage.
-    out.push_str("# How to work in this repo\n\n");
-    out.push_str("- DO NOT explore or scan the repo. The map below has what you need.\n");
-    out.push_str("- Read only files you will change. Use the map to find them.\n");
-    out.push_str("- State your plan in 1-2 sentences, then execute. Do not explain what you are about to do at length.\n");
-    out.push_str("- After making changes, show only what changed and why. Skip the recap.\n");
-    out.push_str("- When running commands, if output is long, focus on errors/failures only.\n");
-    out.push_str("- Batch related file edits into one response instead of one-file-at-a-time.\n");
+    out.push_str("\n# Repo rules\n\n");
+    out.push_str("- Use the map below. Don't explore or scan.\n");
+    out.push_str("- Read only files you'll change.\n");
+    out.push_str("- Batch edits. One response, multiple files.\n");
+    out.push_str("- On errors, show only the error. Skip passing output.\n");
 
     // --- SESSION CONTINUITY ---
     out.push_str("\n# Session continuity\n\n");
-    out.push_str("If Context OS injects a restart packet or `.context-os/handoff.md` exists, read it first. ");
-    out.push_str("Use it to recover the objective, current subtask, validated decisions, failed approaches, and modified files before doing new exploration. ");
-    out.push_str("Do not re-attempt anything listed under failed approaches.\n");
+    out.push_str("If a restart packet or `.context-os/handoff.md` exists, read it first. Resume from there. Don't re-attempt failed approaches.\n");
 
     // --- REPO MAP ---
     out.push_str("\n# Repo map\n\n");
