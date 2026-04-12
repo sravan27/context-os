@@ -2,15 +2,21 @@
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
 
-**Make Claude Code use fewer tokens per task.** One command. Works immediately.
+**Make Claude Code use fewer tokens per task.** One command. No dependencies.
+
+```bash
+cd your-project
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
+```
+
+That's it. Start a new Claude Code session. Claude will be terser, skip noise dirs, and stop wasting tokens on verbose output.
+
+For automatic test/build output reduction (hooks), install the full binary:
 
 ```bash
 cargo install --git https://github.com/sravan27/context-os --path apps/cli
-cd your-project
 context-os init
 ```
-
-That's it. Start a new Claude Code session in your project.
 
 ## What it does
 
