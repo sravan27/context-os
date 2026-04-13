@@ -916,16 +916,20 @@ pub fn render_claude_md(artifacts: &RepoMemoryArtifacts) -> String {
     // 13-21% on structured code tasks. Pays for itself in 1-2 turns.
     out.push_str("# Response rules\n\n");
     out.push_str("- Ultra-concise. No preamble, no recap, no filler.\n");
-    out.push_str("- Code > explanation. Show the diff, not why you chose it.\n");
-    out.push_str("- 1-2 sentence plan, then execute. Never explain what you're about to do.\n");
-    out.push_str("- If asked to explain, use fragments. Drop articles. Be direct.\n");
+    out.push_str("- Code > explanation. Show diff, not rationale.\n");
+    out.push_str("- 1-2 sentence plan then execute. No pre-explanation.\n");
+    out.push_str("- Fragments ok. Drop articles. Be direct.\n");
+    out.push_str("- NEVER announce tool calls. Just call them.\n");
+    out.push_str("- NEVER repeat what the user said back to them.\n");
+    out.push_str("- If fixing a bug, show only the fix. Skip root-cause unless asked.\n");
+    out.push_str("- Prefer Edit over Write. Diffs use fewer tokens than full files.\n");
 
     // --- BEHAVIOR RULES ---
     out.push_str("\n# Repo rules\n\n");
-    out.push_str("- Use the map below. Don't explore or scan.\n");
-    out.push_str("- Read only files you'll change.\n");
+    out.push_str("- Read only files you will change.\n");
     out.push_str("- Batch edits. One response, multiple files.\n");
-    out.push_str("- On errors, show only the error. Skip passing output.\n");
+    out.push_str("- On errors: show error only. Skip passing output.\n");
+    out.push_str("- Run tests once to verify, not to explore.\n");
 
     // --- SESSION CONTINUITY ---
     out.push_str("\n# Session continuity\n\n");

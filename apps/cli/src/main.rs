@@ -575,32 +575,52 @@ fn run_init(args: InitArgs) -> Result<()> {
             ".next",
             "dist",
             "build",
+            "out",
             "target/debug",
             "target/release",
             "__pycache__",
             ".venv",
             "venv",
             ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
             "coverage",
             ".nyc_output",
             ".gradle",
             ".idea",
             ".vs",
+            ".vscode",
             "vendor",
             "Pods",
             ".dart_tool",
             ".flutter-plugins",
+            ".git/objects",
+            ".turbo",
+            ".parcel-cache",
+            ".cache",
         ];
         for dir in &noise_dirs {
             if root.join(dir).is_dir() {
                 ignores.push(format!("{dir}/"));
             }
         }
-        // Always ignore these patterns
+        // Always ignore these patterns (huge, never useful to Claude)
         ignores.push("*.lock".to_string());
         ignores.push("*.min.js".to_string());
         ignores.push("*.min.css".to_string());
         ignores.push("*.map".to_string());
+        ignores.push("*.chunk.js".to_string());
+        ignores.push("*.bundle.js".to_string());
+        ignores.push("package-lock.json".to_string());
+        ignores.push("yarn.lock".to_string());
+        ignores.push("pnpm-lock.yaml".to_string());
+        ignores.push("Cargo.lock".to_string());
+        ignores.push("poetry.lock".to_string());
+        ignores.push("Gemfile.lock".to_string());
+        ignores.push("*.wasm".to_string());
+        ignores.push("*.pb.go".to_string());
+        ignores.push("*.generated.*".to_string());
+        ignores.push("*.snap".to_string());
         ignores.push(".context-os/".to_string());
 
         if !ignores.is_empty() {
