@@ -544,6 +544,94 @@ fn run_init(args: InitArgs) -> Result<()> {
         settings["hooks"] = hooks;
         fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
         eprintln!("installed hooks in .claude/settings.local.json");
+
+        // 3b. Install shared settings.json with env tuning
+        let shared_settings_path = claude_dir.join("settings.json");
+        let mut shared: serde_json::Value = if shared_settings_path.exists() {
+            let content = fs::read_to_string(&shared_settings_path)?;
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+        if !shared.get("env").and_then(|e| e.get("MAX_THINKING_TOKENS")).is_some() {
+            let env = shared.as_object_mut()
+                .and_then(|m| {
+                    if !m.contains_key("env") {
+                        m.insert("env".to_string(), serde_json::json!({}));
+                    }
+                    m.get_mut("env")
+                })
+                .and_then(|e| e.as_object_mut());
+            if let Some(env) = env {
+                env.insert("MAX_THINKING_TOKENS".to_string(), serde_json::json!("8000"));
+                env.insert("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE".to_string(), serde_json::json!("80"));
+            }
+            fs::write(&shared_settings_path, serde_json::to_string_pretty(&shared)?)?;
+            eprintln!("installed env tuning in .claude/settings.json");
+        }
+
+        // 3c. Install slash commands
+        let commands_dir = claude_dir.join("commands");
+        fs::create_dir_all(&commands_dir)?;
+        let compact_cmd = "Write a handoff to `.context-os/handoff.md`:\n\n\
+            1. **Objective**: What we're building (1 line)\n\
+            2. **Done**: What's completed (bullet list, file:line refs)\n\
+            3. **Failed**: What didn't work and why (so we don't retry)\n\
+            4. **Next**: Exact next step to take\n\
+            5. **Modified files**: List every file changed this session\n\n\
+            Keep it under 40 lines. No prose. Start with `[context-os handoff]`.\n\
+            Then say: \"Handoff saved. Start a new session — I'll pick up from here.\"\n";
+        let compact_path = commands_dir.join("compact.md");
+        if !compact_path.exists() {
+            fs::write(&compact_path, compact_cmd)?;
+        }
+        let context_cmd = "Estimate your current context usage:\n\
+            1. Count files you've read this session\n\
+            2. Count tool calls made\n\
+            3. List the 3 largest tool outputs you've seen\n\
+            4. Suggest what to compact or skip\n\n\
+            Table format. Under 10 lines. No explanations.\n";
+        let context_path = commands_dir.join("context.md");
+        if !context_path.exists() {
+            fs::write(&context_path, context_cmd)?;
+        }
+        let ship_cmd = "Ship the current changes:\n\
+            1. Run tests (once). If they fail, show the failure and stop.\n\
+            2. Stage only modified files (not untracked).\n\
+            3. Commit with a 1-line message describing what changed.\n\
+            4. Show the commit hash.\n\n\
+            No explanations. No celebration. Just ship or fail.\n";
+        let ship_path = commands_dir.join("ship.md");
+        if !ship_path.exists() {
+            fs::write(&ship_path, ship_cmd)?;
+        }
+        eprintln!("installed 3 slash commands in .claude/commands/");
+
+        // 3d. Install explorer subagent (Haiku-powered)
+        let agents_dir = claude_dir.join("agents");
+        fs::create_dir_all(&agents_dir)?;
+        let explorer_agent = "---\n\
+            name: explorer\n\
+            description: Fast file/code exploration agent. Use when searching for symbols, reading multiple files to understand structure, or investigating usage patterns. Returns a summary, not raw files.\n\
+            model: haiku\n\
+            ---\n\n\
+            You are a code exploration agent running on Claude Haiku (fast, cheap).\n\n\
+            Your job: answer exploration questions without polluting the main context.\n\n\
+            Rules:\n\
+            - Read files with Grep/Glob first, Read only when needed\n\
+            - Use offset/limit when reading large files\n\
+            - Return a summary (≤500 tokens), not raw file content\n\
+            - Include file paths and line numbers (file.ts:42 format)\n\
+            - If you can't find what was asked, say so in 1 line\n\n\
+            Never:\n\
+            - Write or edit files (you're read-only)\n\
+            - Explain your reasoning\n\
+            - Return full file contents unless explicitly asked\n";
+        let explorer_path = agents_dir.join("explorer.md");
+        if !explorer_path.exists() {
+            fs::write(&explorer_path, explorer_agent)?;
+        }
+        eprintln!("installed explorer subagent (Haiku)");
     }
 
     // 4. Ensure .context-os/ is in .gitignore
@@ -604,22 +692,37 @@ fn run_init(args: InitArgs) -> Result<()> {
                 ignores.push(format!("{dir}/"));
             }
         }
-        // Always ignore these patterns (huge, never useful to Claude)
+        // Secrets (security + tokens)
+        ignores.push(".env".to_string());
+        ignores.push(".env.*".to_string());
+        ignores.push("!.env.example".to_string());
+        ignores.push("!.env.sample".to_string());
+        ignores.push("*.pem".to_string());
+        ignores.push("*.key".to_string());
+        ignores.push("credentials.json".to_string());
+        ignores.push("secrets.json".to_string());
+        ignores.push("id_rsa".to_string());
+        ignores.push("id_ed25519".to_string());
+        // Lock files
         ignores.push("*.lock".to_string());
-        ignores.push("*.min.js".to_string());
-        ignores.push("*.min.css".to_string());
-        ignores.push("*.map".to_string());
-        ignores.push("*.chunk.js".to_string());
-        ignores.push("*.bundle.js".to_string());
         ignores.push("package-lock.json".to_string());
         ignores.push("yarn.lock".to_string());
         ignores.push("pnpm-lock.yaml".to_string());
         ignores.push("Cargo.lock".to_string());
         ignores.push("poetry.lock".to_string());
         ignores.push("Gemfile.lock".to_string());
+        ignores.push("bun.lockb".to_string());
+        // Build artifacts
+        ignores.push("*.min.js".to_string());
+        ignores.push("*.min.css".to_string());
+        ignores.push("*.map".to_string());
+        ignores.push("*.chunk.js".to_string());
+        ignores.push("*.bundle.js".to_string());
         ignores.push("*.wasm".to_string());
+        // Generated code
         ignores.push("*.pb.go".to_string());
         ignores.push("*.generated.*".to_string());
+        ignores.push("*.g.dart".to_string());
         ignores.push("*.snap".to_string());
         ignores.push(".context-os/".to_string());
 

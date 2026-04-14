@@ -923,13 +923,17 @@ pub fn render_claude_md(artifacts: &RepoMemoryArtifacts) -> String {
     out.push_str("- NEVER repeat what the user said back to them.\n");
     out.push_str("- If fixing a bug, show only the fix. Skip root-cause unless asked.\n");
     out.push_str("- Prefer Edit over Write. Diffs use fewer tokens than full files.\n");
+    out.push_str("- Skip imports in code snippets unless they're the change.\n");
+    out.push_str("- On success: state what was done in ≤1 sentence. No celebration.\n");
 
     // --- BEHAVIOR RULES ---
     out.push_str("\n# Repo rules\n\n");
     out.push_str("- Read only files you will change.\n");
-    out.push_str("- Batch edits. One response, multiple files.\n");
+    out.push_str("- Batch edits: one response, multiple files.\n");
     out.push_str("- On errors: show error only. Skip passing output.\n");
     out.push_str("- Run tests once to verify, not to explore.\n");
+    out.push_str("- Use Grep/Glob tools over shell find/grep — they're cheaper.\n");
+    out.push_str("- Read files with offset+limit when you only need part.\n");
 
     // --- SESSION CONTINUITY ---
     out.push_str("\n# Session continuity\n\n");

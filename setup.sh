@@ -1,45 +1,123 @@
 #!/usr/bin/env bash
-# context-os: Every known Claude Code token optimization in one command.
-# Usage: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
+# context-os: Every proven Claude Code token optimization in one command.
+# Usage:     curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
+# Status:    curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --status
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
+VERSION="0.3.0"
+
 # ============================================================================
-# Uninstall mode
+# --status: Show what's configured
+# ============================================================================
+if [ "${1:-}" = "--status" ]; then
+  echo ""
+  echo "  context-os status"
+  echo "  ─────────────────"
+  OK=0; WARN=0
+  check() {
+    if [ "$1" = "ok" ]; then
+      printf "  ✓ %-22s %s\n" "$2" "$3"
+      OK=$((OK + 1))
+    else
+      printf "  ✗ %-22s %s\n" "$2" "$3"
+      WARN=$((WARN + 1))
+    fi
+  }
+  if [ -f CLAUDE.md ] && grep -q 'context-os:start' CLAUDE.md; then
+    check ok "response shaping" "active (CLAUDE.md)"
+  else
+    check fail "response shaping" "missing"
+  fi
+  if [ -f .claudeignore ]; then
+    P=$(wc -l < .claudeignore | tr -d ' ')
+    check ok "noise filtering" "$P patterns (.claudeignore)"
+  else
+    check fail "noise filtering" "missing"
+  fi
+  if [ -f .claude/settings.json ] && grep -q 'MAX_THINKING_TOKENS' .claude/settings.json 2>/dev/null; then
+    check ok "env tuning" "active (settings.json)"
+  else
+    check fail "env tuning" "not configured"
+  fi
+  if [ -d .claude/commands ] && ls .claude/commands/*.md &>/dev/null; then
+    C=$(ls .claude/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
+    check ok "slash commands" "$C installed"
+  else
+    check fail "slash commands" "none"
+  fi
+  if [ -d .claude/agents ] && ls .claude/agents/*.md &>/dev/null; then
+    A=$(ls .claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
+    check ok "haiku subagents" "$A installed"
+  else
+    check fail "haiku subagents" "none"
+  fi
+  if [ -f .claude/settings.local.json ] && grep -q 'hooks' .claude/settings.local.json 2>/dev/null; then
+    check ok "hooks" "active (output compression)"
+  else
+    check fail "hooks" "not active (optional)"
+  fi
+  echo ""
+  echo "  $OK active, $WARN inactive"
+  echo ""
+  exit 0
+fi
+
+# ============================================================================
+# --uninstall: Reversible removal
 # ============================================================================
 if [ "${1:-}" = "--uninstall" ]; then
   echo "context-os: removing optimizations..."
-  # Remove CLAUDE.md block (preserve user content)
   if [ -f CLAUDE.md ] && grep -q '<!-- context-os:start -->' CLAUDE.md; then
     python3 -c "
 import re
 text = open('CLAUDE.md').read()
 text = re.sub(r'\n*<!-- context-os:start -->.*?<!-- context-os:end -->\n*', '', text, flags=re.DOTALL)
 open('CLAUDE.md', 'w').write(text)
-" 2>/dev/null && echo "  removed response shaping from CLAUDE.md" || echo "  could not update CLAUDE.md (remove <!-- context-os --> block manually)"
-    # Delete CLAUDE.md if it's now empty
-    if [ -f CLAUDE.md ] && [ ! -s CLAUDE.md ]; then
-      rm CLAUDE.md && echo "  deleted empty CLAUDE.md"
-    fi
+" 2>/dev/null && echo "  removed CLAUDE.md block"
+    [ -f CLAUDE.md ] && [ ! -s CLAUDE.md ] && rm CLAUDE.md && echo "  deleted empty CLAUDE.md"
   fi
-  # Remove .claudeignore if we created it
-  if [ -f .claudeignore ] && head -1 .claudeignore | grep -q 'context-os'; then
-    rm .claudeignore && echo "  removed .claudeignore"
+  [ -f .claudeignore ] && head -1 .claudeignore | grep -q 'context-os' && rm .claudeignore && echo "  removed .claudeignore"
+  if [ -f .claude/settings.json ]; then
+    python3 -c "
+import json
+try:
+    s = json.load(open('.claude/settings.json'))
+    if 'env' in s and 'MAX_THINKING_TOKENS' in s.get('env', {}):
+        s.pop('env', None)
+        s.pop('statusLine', None)
+        if s:
+            json.dump(s, open('.claude/settings.json', 'w'), indent=2)
+        else:
+            import os; os.remove('.claude/settings.json')
+except: pass
+" 2>/dev/null && echo "  removed env tuning from settings.json"
   fi
-  # Remove hooks from settings
   if [ -f .claude/settings.local.json ]; then
     python3 -c "
 import json
-s = json.load(open('.claude/settings.local.json'))
-s.pop('hooks', None)
-if s:
-    json.dump(s, open('.claude/settings.local.json', 'w'), indent=2)
-else:
-    import os; os.remove('.claude/settings.local.json')
-" 2>/dev/null && echo "  removed hooks from .claude/settings.local.json"
+try:
+    s = json.load(open('.claude/settings.local.json'))
+    s.pop('hooks', None)
+    if s:
+        json.dump(s, open('.claude/settings.local.json', 'w'), indent=2)
+    else:
+        import os; os.remove('.claude/settings.local.json')
+except: pass
+" 2>/dev/null && echo "  removed hooks"
   fi
-  # Remove session state
+  for cmd in compact context ship; do
+    [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
+  done
+  for agent in explorer; do
+    [ -f ".claude/agents/${agent}.md" ] && rm ".claude/agents/${agent}.md" && echo "  removed /.claude/agents/${agent}.md"
+  done
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
+  # Clean up empty .claude subdirs
+  for d in .claude/commands .claude/agents; do
+    [ -d "$d" ] && [ -z "$(ls -A "$d" 2>/dev/null)" ] && rmdir "$d"
+  done
+  [ -d .claude ] && [ -z "$(ls -A .claude 2>/dev/null)" ] && rmdir .claude
   echo "  done. Context OS fully removed."
   exit 0
 fi
@@ -47,62 +125,117 @@ fi
 # ============================================================================
 # Install mode
 # ============================================================================
-echo "context-os: scanning project..."
+echo ""
+echo "  context-os v${VERSION}"
+echo "  ═══════════════════════════════════════════════════"
+echo "  Every proven Claude Code token optimization"
+echo "  in one command. Zero dependencies. Reversible."
+echo ""
+echo "  scanning project..."
 
 # ============================================================================
-# 0. Detect project stack and count noise
+# Detect stack + count noise
 # ============================================================================
 NOISE_FILES=0
-NOISE_DIRS=""
 
 count_files_in() {
   if [ -d "$1" ]; then
     local c
-    c=$(find "$1" -type f 2>/dev/null | head -10000 | wc -l | tr -d ' ')
+    c=$(find "$1" -type f 2>/dev/null | head -50000 | wc -l | tr -d ' ')
     NOISE_FILES=$((NOISE_FILES + c))
-    NOISE_DIRS="$NOISE_DIRS  $1/ ($c files)\n"
   fi
 }
 
-# Check all common noise directories
 for dir in node_modules .next dist build out target/debug target/release \
            __pycache__ .venv venv .tox .mypy_cache .pytest_cache \
            coverage .nyc_output .gradle .idea .vs .vscode \
            vendor Pods .dart_tool .flutter-plugins \
-           .git/objects .turbo .parcel-cache .cache; do
+           .git/objects .turbo .parcel-cache .cache \
+           .svelte-kit .nuxt .output .vercel .netlify \
+           bower_components jspm_packages .pnp .yarn \
+           DerivedData .build .swiftpm; do
   count_files_in "$dir"
 done
 
-# Detect stack
+SRC_FILES=$(find . -maxdepth 4 -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.py' -o -name '*.rs' -o -name '*.go' -o -name '*.java' -o -name '*.rb' -o -name '*.swift' -o -name '*.dart' -o -name '*.cs' -o -name '*.cpp' -o -name '*.c' -o -name '*.vue' -o -name '*.svelte' \) \
+  ! -path './node_modules/*' ! -path './dist/*' ! -path './build/*' ! -path './.next/*' \
+  ! -path './target/*' ! -path './.venv/*' ! -path './venv/*' ! -path './vendor/*' \
+  ! -path './__pycache__/*' ! -path './.git/*' ! -path './.cache/*' \
+  2>/dev/null | wc -l | tr -d ' ')
+
 STACK=""
-[ -f package.json ] && STACK="$STACK node"
-[ -f tsconfig.json ] && STACK="$STACK typescript"
-[ -f next.config.js ] || [ -f next.config.mjs ] || [ -f next.config.ts ] && STACK="$STACK nextjs"
-[ -f Cargo.toml ] && STACK="$STACK rust"
-[ -f go.mod ] && STACK="$STACK go"
-[ -f requirements.txt ] || [ -f pyproject.toml ] || [ -f setup.py ] && STACK="$STACK python"
-[ -f Gemfile ] && STACK="$STACK ruby"
-[ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ] && STACK="$STACK java"
-[ -f pubspec.yaml ] && STACK="$STACK flutter"
-[ -f Package.swift ] && STACK="$STACK swift"
-[ -f *.csproj ] 2>/dev/null && STACK="$STACK dotnet"
-STACK="${STACK# }"  # trim leading space
+[ -f package.json ] && STACK="${STACK:+$STACK, }node"
+[ -f tsconfig.json ] && STACK="${STACK:+$STACK, }typescript"
+{ [ -f next.config.js ] || [ -f next.config.mjs ] || [ -f next.config.ts ]; } && STACK="${STACK:+$STACK, }next.js"
+[ -f Cargo.toml ] && STACK="${STACK:+$STACK, }rust"
+[ -f go.mod ] && STACK="${STACK:+$STACK, }go"
+{ [ -f requirements.txt ] || [ -f pyproject.toml ] || [ -f setup.py ] || [ -f Pipfile ]; } && STACK="${STACK:+$STACK, }python"
+[ -f Gemfile ] && STACK="${STACK:+$STACK, }ruby"
+{ [ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ]; } && STACK="${STACK:+$STACK, }java"
+[ -f pubspec.yaml ] && STACK="${STACK:+$STACK, }flutter"
+[ -f Package.swift ] && STACK="${STACK:+$STACK, }swift"
+ls ./*.csproj &>/dev/null 2>&1 && STACK="${STACK:+$STACK, }dotnet"
+{ [ -f svelte.config.js ] || [ -f svelte.config.ts ]; } && STACK="${STACK:+$STACK, }svelte"
+{ [ -f nuxt.config.js ] || [ -f nuxt.config.ts ]; } && STACK="${STACK:+$STACK, }nuxt"
+{ [ -f docker-compose.yml ] || [ -f docker-compose.yaml ] || [ -f Dockerfile ]; } && STACK="${STACK:+$STACK, }docker"
+[ -d .terraform ] && STACK="${STACK:+$STACK, }terraform"
 
-if [ -n "$STACK" ]; then
-  echo "  detected: $STACK"
-fi
-if [ "$NOISE_FILES" -gt 0 ]; then
-  printf "  found %s files in noise directories:\n" "$NOISE_FILES"
-  printf "$NOISE_DIRS"
-fi
-echo ""
-echo "  configuring optimizations..."
+[ -n "$STACK" ] && echo "  stack:  $STACK"
+echo "  source: $SRC_FILES files"
+[ "$NOISE_FILES" -gt 0 ] && echo "  noise:  $NOISE_FILES files"
 echo ""
 
 # ============================================================================
-# 1. CLAUDE.md — Response shaping + repo rules
-#    Research: terse instructions save 40-65% output tokens (caveman benchmark)
+# Build lightweight repo map
 # ============================================================================
+REPOMAP=""
+if [ "$SRC_FILES" -gt 0 ]; then
+  TOPDIRS=$(find . -maxdepth 1 -type d ! -name '.' ! -name '.git' ! -name 'node_modules' \
+    ! -name 'dist' ! -name 'build' ! -name '.next' ! -name 'target' ! -name '.venv' \
+    ! -name 'venv' ! -name '__pycache__' ! -name '.cache' ! -name 'coverage' \
+    ! -name '.turbo' ! -name '.parcel-cache' ! -name 'out' ! -name '.context-os' \
+    ! -name '.nyc_output' ! -name '.gradle' ! -name 'vendor' ! -name 'Pods' \
+    ! -name '.svelte-kit' ! -name '.nuxt' ! -name '.output' ! -name '.vercel' \
+    ! -name '.idea' ! -name '.vs' ! -name '.vscode' ! -name 'bower_components' \
+    ! -name 'DerivedData' ! -name '.build' ! -name '.swiftpm' ! -name '.claude' \
+    2>/dev/null | sed 's|^\./||' | sort | head -20)
+
+  if [ -n "$TOPDIRS" ]; then
+    MAP_LINES=""
+    for d in $TOPDIRS; do
+      DCOUNT=$(find "./$d" -maxdepth 3 -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.py' -o -name '*.rs' -o -name '*.go' -o -name '*.java' -o -name '*.rb' -o -name '*.swift' -o -name '*.dart' -o -name '*.cs' -o -name '*.cpp' -o -name '*.c' -o -name '*.vue' -o -name '*.svelte' \) \
+        ! -path '*/node_modules/*' ! -path '*/dist/*' ! -path '*/build/*' ! -path '*/.next/*' \
+        ! -path '*/target/*' ! -path '*/.venv/*' ! -path '*/venv/*' ! -path '*/vendor/*' \
+        2>/dev/null | wc -l | tr -d ' ')
+      if [ "$DCOUNT" -gt 0 ]; then
+        SUBDIRS=$(find "./$d" -maxdepth 1 -type d ! -path "./$d" 2>/dev/null | sed "s|./$d/||" | sort | head -8 | tr '\n' ' ')
+        if [ -n "$SUBDIRS" ]; then
+          MAP_LINES="${MAP_LINES}${d}/ (${DCOUNT} files) — ${SUBDIRS}
+"
+        else
+          MAP_LINES="${MAP_LINES}${d}/ (${DCOUNT} files)
+"
+        fi
+      else
+        MAP_LINES="${MAP_LINES}${d}/
+"
+      fi
+    done
+    if [ -n "$MAP_LINES" ]; then
+      REPOMAP="
+# Project structure
+
+\`\`\`
+${MAP_LINES}\`\`\`"
+    fi
+  fi
+fi
+
+# ============================================================================
+# STEP 1: CLAUDE.md — Response shaping (saves 40-65% output tokens)
+# ============================================================================
+STEP=1
+TOTAL=7
 MARKER_START="<!-- context-os:start -->"
 MARKER_END="<!-- context-os:end -->"
 
@@ -117,24 +250,29 @@ BLOCK="$MARKER_START
 - NEVER repeat what the user said back to them.
 - If fixing a bug, show only the fix. Skip root-cause unless asked.
 - Prefer Edit over Write. Diffs use fewer tokens than full files.
+- Skip imports in code snippets unless they're the change.
+- On success: state what was done in ≤1 sentence. No celebration.
 
 # Repo rules
 
 - Read only files you will change.
-- Batch edits. One response, multiple files.
+- Batch edits: one response, multiple files.
 - On errors: show error only. Skip passing output.
 - Run tests once to verify, not to explore.
+- Use Grep/Glob tools over shell find/grep — they're cheaper.
+- Read files with offset+limit when you only need part.
+- For broad exploration, delegate to the \`explorer\` subagent (runs on Haiku, 15x cheaper).
+$REPOMAP
 
 # Session continuity
 
 If a restart packet or \`.context-os/handoff.md\` exists, read it first.
 Resume from there. Don't re-attempt failed approaches.
+Use \`/compact\` before context fills up to save state.
 $MARKER_END"
 
 if [ -f CLAUDE.md ]; then
   if grep -q "$MARKER_START" CLAUDE.md; then
-    # Use sed-based approach to avoid Python quoting issues
-    # Write new block to temp file, then use Python to do the replacement reading from files
     TMPBLOCK=$(mktemp)
     printf '%s' "$BLOCK" > "$TMPBLOCK"
     python3 -c "
@@ -143,60 +281,234 @@ text = open('CLAUDE.md').read()
 block = open('$TMPBLOCK').read()
 text = re.sub(r'<!-- context-os:start -->.*?<!-- context-os:end -->', block, text, flags=re.DOTALL)
 open('CLAUDE.md', 'w').write(text)
-" 2>/dev/null && echo "  [1/4] updated CLAUDE.md response shaping" || echo "  [1/4] CLAUDE.md exists (could not update, skipping)"
+" 2>/dev/null && echo "  [$STEP/$TOTAL] updated CLAUDE.md (response shaping + repo map)" || echo "  [$STEP/$TOTAL] CLAUDE.md update skipped"
     rm -f "$TMPBLOCK"
   else
     printf '\n\n%s\n' "$BLOCK" >> CLAUDE.md
-    echo "  [1/4] appended response shaping to CLAUDE.md"
+    echo "  [$STEP/$TOTAL] appended to CLAUDE.md"
   fi
 else
   printf '%s\n' "$BLOCK" > CLAUDE.md
-  echo "  [1/4] created CLAUDE.md with response shaping"
+  echo "  [$STEP/$TOTAL] created CLAUDE.md"
 fi
 
 # ============================================================================
-# 2. .claudeignore — Stop Claude from searching noise directories
-#    Every file Claude reads = tokens burned
+# STEP 2: .claudeignore — Noise + secrets (30-40% context reduction)
 # ============================================================================
+STEP=2
 if [ ! -f .claudeignore ]; then
   IGNORES=""
   for dir in node_modules .next dist build out target/debug target/release \
              __pycache__ .venv venv .tox .mypy_cache .pytest_cache \
              coverage .nyc_output .gradle .idea .vs .vscode \
              vendor Pods .dart_tool .flutter-plugins \
-             .git/objects .turbo .parcel-cache .cache; do
+             .git/objects .turbo .parcel-cache .cache \
+             .svelte-kit .nuxt .output .vercel .netlify \
+             bower_components jspm_packages .pnp .yarn \
+             DerivedData .build .swiftpm \
+             .terraform .serverless .aws-sam \
+             .angular storybook-static; do
     [ -d "$dir" ] && IGNORES="$IGNORES$dir/
 "
   done
 
-  # Always ignore these file patterns (huge, never useful to Claude)
-  IGNORES="${IGNORES}*.lock
-*.min.js
-*.min.css
-*.map
-*.chunk.js
-*.bundle.js
+  IGNORES="${IGNORES}
+# --- SECRETS (security + savings) ---
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+*.secret
+id_rsa
+id_ed25519
+known_hosts
+.aws/credentials
+.netrc
+
+# --- LOCK FILES (huge, no useful info) ---
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
 Cargo.lock
 poetry.lock
 Gemfile.lock
+composer.lock
+Podfile.lock
+bun.lockb
+*.lock
+
+# --- BUILD ARTIFACTS ---
+*.min.js
+*.min.css
+*.map
+*.chunk.js
+*.bundle.js
 *.wasm
+
+# --- GENERATED CODE ---
 *.pb.go
+*.pb.h
+*.pb.cc
 *.generated.*
+*.g.dart
+*.gen.ts
+
+# --- TEST SNAPSHOTS & COVERAGE ---
 *.snap
+lcov.info
+*.lcov
+coverage.xml
+coverage.json
+
+# --- DATA FILES ---
+*.sqlite
+*.sqlite3
+*.db
+*.csv
+*.parquet
+*.arrow
+
+# --- BINARY/MEDIA ---
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.svg
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.mp3
+*.mp4
+*.webm
+*.pdf
+*.zip
+*.tar.gz
+*.tgz
 "
-  printf '# Generated by context-os — prevents Claude from searching noise\n%s' "$IGNORES" > .claudeignore
-  echo "  [2/4] created .claudeignore (filtering $NOISE_FILES files)"
+  PATTERN_COUNT=$(printf '%s' "$IGNORES" | grep -cE '^[a-zA-Z*!.]' || true)
+  printf '# Generated by context-os v%s — prevents Claude from reading noise + secrets\n# Regenerate: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash\n%s' "$VERSION" "$IGNORES" > .claudeignore
+  echo "  [$STEP/$TOTAL] created .claudeignore ($PATTERN_COUNT patterns, secrets blocked)"
 else
-  echo "  [2/4] .claudeignore already exists"
+  echo "  [$STEP/$TOTAL] .claudeignore exists (keeping yours)"
 fi
 
 # ============================================================================
-# 3. .claude/settings.local.json — Hooks for output compression + memory
-#    Only if full binary is available
+# STEP 3: .claude/settings.json — Env vars (caps thinking/output cost)
 # ============================================================================
+STEP=3
+mkdir -p .claude
+SETTINGS_JSON=".claude/settings.json"
+
+# Env tuning (shared, checked into repo)
+ENV_SETTINGS='{
+  "env": {
+    "MAX_THINKING_TOKENS": "8000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+  }
+}'
+
+if [ -f "$SETTINGS_JSON" ]; then
+  printf '%s' "$ENV_SETTINGS" | python3 -c "
+import json, sys
+try:
+    existing = json.load(open('$SETTINGS_JSON'))
+except:
+    existing = {}
+new = json.load(sys.stdin)
+existing.setdefault('env', {})
+existing['env'].update(new['env'])
+json.dump(existing, open('$SETTINGS_JSON', 'w'), indent=2)
+" 2>/dev/null && echo "  [$STEP/$TOTAL] merged env tuning into settings.json" || echo "  [$STEP/$TOTAL] env tuning merge failed"
+else
+  printf '%s' "$ENV_SETTINGS" | python3 -m json.tool > "$SETTINGS_JSON" 2>/dev/null || printf '%s\n' "$ENV_SETTINGS" > "$SETTINGS_JSON"
+  echo "  [$STEP/$TOTAL] created settings.json (MAX_THINKING_TOKENS=8000, AUTOCOMPACT=80%)"
+fi
+
+# ============================================================================
+# STEP 4: Slash commands — /compact, /context, /ship
+# ============================================================================
+STEP=4
+mkdir -p .claude/commands
+
+cat > .claude/commands/compact.md << 'CMDEOF'
+Write a handoff to `.context-os/handoff.md`:
+
+1. **Objective**: What we're building (1 line)
+2. **Done**: What's completed (bullet list, file:line refs)
+3. **Failed**: What didn't work and why (so we don't retry)
+4. **Next**: Exact next step to take
+5. **Modified files**: List every file changed this session
+
+Keep it under 40 lines. No prose. Start with `[context-os handoff]`.
+Then say: "Handoff saved. Start a new session — I'll pick up from here."
+CMDEOF
+
+cat > .claude/commands/context.md << 'CMDEOF'
+Estimate your current context usage:
+1. Count files you've read this session
+2. Count tool calls made
+3. List the 3 largest tool outputs you've seen
+4. Suggest what to compact or skip
+
+Table format. Under 10 lines. No explanations.
+CMDEOF
+
+cat > .claude/commands/ship.md << 'CMDEOF'
+Ship the current changes:
+1. Run tests (once). If they fail, show the failure and stop.
+2. Stage only modified files (not untracked).
+3. Commit with a 1-line message describing what changed.
+4. Show the commit hash.
+
+No explanations. No celebration. Just ship or fail.
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 3 slash commands (/compact, /context, /ship)"
+
+# ============================================================================
+# STEP 5: Haiku subagent — 15x cheaper than Opus for exploration
+# ============================================================================
+STEP=5
+mkdir -p .claude/agents
+
+cat > .claude/agents/explorer.md << 'AGENTEOF'
+---
+name: explorer
+description: Fast file/code exploration agent. Use when searching for symbols, reading multiple files to understand structure, or investigating usage patterns. Returns a summary, not raw files.
+model: haiku
+---
+
+You are a code exploration agent running on Claude Haiku (fast, cheap).
+
+Your job: answer exploration questions without polluting the main context.
+
+Rules:
+- Read files with Grep/Glob first, Read only when needed
+- Use offset/limit when reading large files
+- Return a summary (≤500 tokens), not raw file content
+- Include file paths and line numbers (file.ts:42 format)
+- If you can't find what was asked, say so in 1 line
+
+Never:
+- Write or edit files (you're read-only)
+- Explain your reasoning
+- Return full file contents unless explicitly asked
+AGENTEOF
+
+echo "  [$STEP/$TOTAL] installed explorer subagent (Haiku — 15x cheaper)"
+
+# ============================================================================
+# STEP 6: Hooks — output compression + session memory (needs binary)
+# ============================================================================
+STEP=6
 BIN=""
 if command -v context-os &>/dev/null; then
   BIN="context-os"
@@ -207,11 +519,9 @@ elif [ -f "./target/release/context-os" ]; then
 fi
 
 if [ -n "$BIN" ]; then
-  mkdir -p .claude
-  SETTINGS=".claude/settings.local.json"
+  SETTINGS_LOCAL=".claude/settings.local.json"
   ROOT="$(pwd)"
 
-  # Build hooks JSON
   HOOKS=$(cat <<HOOKEOF
 {
   "hooks": {
@@ -240,54 +550,49 @@ if [ -n "$BIN" ]; then
 HOOKEOF
 )
 
-  if [ -f "$SETTINGS" ]; then
-    # Merge hooks into existing settings (pipe JSON via stdin to avoid quoting issues)
+  if [ -f "$SETTINGS_LOCAL" ]; then
     printf '%s' "$HOOKS" | python3 -c "
 import json, sys
-existing = json.load(open('$SETTINGS'))
+existing = json.load(open('$SETTINGS_LOCAL'))
 new_hooks = json.load(sys.stdin)
 existing['hooks'] = new_hooks['hooks']
-json.dump(existing, open('$SETTINGS', 'w'), indent=2)
-" 2>/dev/null && echo "  [3/4] updated hooks in .claude/settings.local.json" || echo "  [3/4] could not merge hooks (settings.local.json may need manual update)"
+json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
+" 2>/dev/null && echo "  [$STEP/$TOTAL] updated hooks in settings.local.json" || echo "  [$STEP/$TOTAL] hooks merge failed"
   else
-    printf '%s' "$HOOKS" | python3 -m json.tool > "$SETTINGS" 2>/dev/null || printf '%s' "$HOOKS" > "$SETTINGS"
-    echo "  [3/4] installed 5 hooks in .claude/settings.local.json"
+    printf '%s' "$HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$HOOKS" > "$SETTINGS_LOCAL"
+    echo "  [$STEP/$TOTAL] installed 5 hooks (output compression + memory)"
   fi
 
-  # Create session state
   mkdir -p .context-os
   [ -f .context-os/session.json ] || printf '{"schema_version":1}' > .context-os/session.json
   [ -f .context-os/journal.jsonl ] || touch .context-os/journal.jsonl
 else
-  echo "  [3/4] hooks skipped (install binary for output compression + session memory)"
+  echo "  [$STEP/$TOTAL] hooks skipped (needs binary — optional)"
 fi
 
 # ============================================================================
-# 4. .gitignore — Keep local state out of version control
+# STEP 7: .gitignore
 # ============================================================================
+STEP=7
 if [ -f .gitignore ]; then
   if ! grep -q '.context-os' .gitignore 2>/dev/null; then
-    printf '\n# Context OS local state\n.context-os/\n' >> .gitignore
-    echo "  [4/4] added .context-os/ to .gitignore"
+    printf '\n# Context OS local state\n.context-os/\n.claude/settings.local.json\n' >> .gitignore
+    echo "  [$STEP/$TOTAL] added .context-os/ + settings.local.json to .gitignore"
   else
-    echo "  [4/4] .gitignore already has .context-os/"
+    echo "  [$STEP/$TOTAL] .gitignore already configured"
   fi
 else
-  printf '# Context OS local state\n.context-os/\n' > .gitignore
-  echo "  [4/4] created .gitignore"
+  printf '# Context OS local state\n.context-os/\n.claude/settings.local.json\n' > .gitignore
+  echo "  [$STEP/$TOTAL] created .gitignore"
 fi
 
 # ============================================================================
-# Impact summary
+# Impact report
 # ============================================================================
 echo ""
-echo "  ── impact ──────────────────────────────────────────"
+echo "  ── what's active ───────────────────────────────────"
 echo ""
 
-# Estimate token savings
-# Average file = ~200 tokens for Claude to process (path + content sample)
-# Response shaping saves ~50% on explanation-heavy tasks
-TOKENS_SAVED=0
 if [ "$NOISE_FILES" -gt 0 ]; then
   TOKENS_SAVED=$((NOISE_FILES * 200))
   if [ "$TOKENS_SAVED" -ge 1000000 ]; then
@@ -297,24 +602,37 @@ if [ "$NOISE_FILES" -gt 0 ]; then
   else
     DISPLAY_TOKENS="$TOKENS_SAVED"
   fi
-  echo "  .claudeignore: $NOISE_FILES noise files hidden (~${DISPLAY_TOKENS} tokens/search saved)"
+  printf "  ✓ %-22s %s\n" "noise filtering" "$NOISE_FILES files hidden (~${DISPLAY_TOKENS} tokens/search)"
 else
-  echo "  .claudeignore: active (no noise dirs detected yet)"
+  printf "  ✓ %-22s %s\n" "noise filtering" "active"
 fi
-
-echo "  CLAUDE.md:     response shaping active (40-65% output reduction)"
+printf "  ✓ %-22s %s\n" "response shaping" "40-65% fewer output tokens"
+printf "  ✓ %-22s %s\n" "repo map" "Claude skips structure scanning"
+printf "  ✓ %-22s %s\n" "thinking cap" "8000 tokens max (saves on simple tasks)"
+printf "  ✓ %-22s %s\n" "early compaction" "at 80% (default is 95%)"
+printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship"
+printf "  ✓ %-22s %s\n" "haiku subagent" "/explorer for cheap exploration"
+printf "  ✓ %-22s %s\n" "secret filtering" ".env, *.pem, credentials blocked"
 
 if [ -n "$BIN" ]; then
-  echo "  hooks:         5 active (output compression + session memory)"
+  printf "  ✓ %-22s %s\n" "output compression" "27-70% on test/build output"
+  printf "  ✓ %-22s %s\n" "session memory" "survives compaction + restarts"
 else
-  echo "  hooks:         inactive (optional — install binary for 27-70% output compression)"
+  printf "  · %-22s %s\n" "output compression" "optional (needs binary)"
+  printf "  · %-22s %s\n" "session memory" "optional (needs binary)"
 fi
 
 echo ""
-echo "  Start a new Claude Code session to activate."
+echo "  ── next steps ──────────────────────────────────────"
+echo ""
+echo "  1. Start a new Claude Code session to activate"
+echo "  2. Use /compact before context fills up"
+echo "  3. For exploration, tell Claude to 'use the explorer subagent'"
 if [ -z "$BIN" ]; then
-  echo ""
-  echo "  Want hooks too? cargo install --git https://github.com/sravan27/context-os --path apps/cli"
+  echo "  4. Optional: install binary for output compression"
+  echo "     cargo install --git https://github.com/sravan27/context-os --path apps/cli"
 fi
 echo ""
-echo "  Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall"
+echo "  --status     check what's active"
+echo "  --uninstall  fully reversible removal"
+echo ""
