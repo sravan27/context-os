@@ -125,7 +125,7 @@ None put them together. You end up installing four tools, maintaining four confi
 
 Context OS is one command. Every proven technique. If a new technique emerges, we add it here — you re-run the one curl command.
 
-## Limits (be honest)
+## Limitations
 
 - Does not bypass Anthropic usage limits. Makes them hurt less.
 - Response shaping effectiveness varies: 40-65% on explanation-heavy tasks, 13-21% on structured code.
