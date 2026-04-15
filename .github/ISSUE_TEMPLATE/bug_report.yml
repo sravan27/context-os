@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in Context OS is broken or behaving wrong.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, what did you get?
+      placeholder: |
+        1. Ran `curl ... | bash`
+        2. Expected CLAUDE.md to be created
+        3. Got "permission denied"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 14.5 / Ubuntu 22.04 / WSL2"
+    validations:
+      required: true
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      placeholder: "bash 5.2 / zsh 5.9"
+    validations:
+      required: true
+  - type: input
+    id: stack
+    attributes:
+      label: Project stack
+      placeholder: "Next.js / Django / Rust workspace"
+  - type: textarea
+    id: status-output
+    attributes:
+      label: Output of --status
+      description: Paste the output of `curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --status`
+      render: shell
+  - type: textarea
+    id: measure-output
+    attributes:
+      label: Output of --measure
+      description: Paste the output of `curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --measure`
+      render: shell

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Measure your own savings first
+    url: https://github.com/sravan27/context-os#see-what-youd-save-no-install
+    about: Run `curl ... | bash -s -- --measure` to see token savings in your repo before filing an issue.
