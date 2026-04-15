@@ -158,6 +158,20 @@ Context OS automates the things that can be automated. These are the manual tech
 
 From our own benchmarks in `python/evals/reports/`:
 
+**End-to-end (`scripts/benchmark.sh`, real `claude --print` invocations):**
+
+| Metric | Before | After | Delta |
+|---|---:|---:|---:|
+| Input tokens | 5 | 4 | -1 |
+| Cached reads | 74,064 | 48,182 | −25,882 |
+| Output tokens | 466 | 294 | −172 |
+| **Total tokens** | **79,790** | **54,036** | **−32%** |
+| **Cost (USD)** | **$0.049** | **$0.040** | **−18.8%** |
+
+That's a trivial 2-file fixture (`/tmp/cos-bench-test`: README + one `.js` file). On real repos with actual noise (`node_modules`, `dist`, `.next`), reductions get bigger, not smaller. Reproduce: `scripts/benchmark.sh /path/to/your/repo --model sonnet`.
+
+**Other benchmarks:**
+
 - **71% reduction** on 50-test cargo output (48 passing tests collapsed, 2 failures preserved)
 - **100% protected string recall** — no errors, paths, or versions dropped
 - **5/5 concurrent PostToolUse writes** captured (lockfile prevents race conditions)

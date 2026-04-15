@@ -1,0 +1,29 @@
+{
+  "target": "/tmp/cos-bench-test",
+  "task": "List the top-level directory structure of this repo, then count source files by language. One line per language.",
+  "model": "sonnet",
+  "before": {
+    "input_tokens": 5,
+    "cache_read_input_tokens": 74064,
+    "cache_creation_input_tokens": 5255,
+    "output_tokens": 466,
+    "total_tokens": 79790,
+    "total_cost_usd": 0.04893045
+  },
+  "after": {
+    "input_tokens": 4,
+    "cache_read_input_tokens": 48182,
+    "cache_creation_input_tokens": 5556,
+    "output_tokens": 294,
+    "total_tokens": 54036,
+    "total_cost_usd": 0.0397116
+  },
+  "delta": {
+    "input_tokens": 1,
+    "output_tokens": 172,
+    "total_tokens": 25754,
+    "total_cost_usd": 0.0092
+  },
+  "token_reduction_pct": 32,
+  "cost_reduction_pct": 18.8
+}
