@@ -687,10 +687,10 @@ fn run_init(args: InitArgs) -> Result<()> {
             ".parcel-cache",
             ".cache",
         ];
+        // Always include standard noise patterns (cover future-created dirs like
+        // node_modules after `npm install`, target/ after `cargo build`, etc.)
         for dir in &noise_dirs {
-            if root.join(dir).is_dir() {
-                ignores.push(format!("{dir}/"));
-            }
+            ignores.push(format!("{dir}/"));
         }
         // Secrets (security + tokens)
         ignores.push(".env".to_string());

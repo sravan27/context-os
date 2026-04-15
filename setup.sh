@@ -398,6 +398,7 @@ fi
 # ============================================================================
 STEP=2
 if [ ! -f .claudeignore ]; then
+  # Always include standard noise — covers future-created dirs (node_modules after npm i, etc.)
   IGNORES=""
   for dir in node_modules .next dist build out target/debug target/release \
              __pycache__ .venv venv .tox .mypy_cache .pytest_cache \
@@ -409,7 +410,7 @@ if [ ! -f .claudeignore ]; then
              DerivedData .build .swiftpm \
              .terraform .serverless .aws-sam \
              .angular storybook-static; do
-    [ -d "$dir" ] && IGNORES="$IGNORES$dir/
+    IGNORES="$IGNORES$dir/
 "
   done
 
