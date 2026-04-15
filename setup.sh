@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -109,6 +109,96 @@ if [ "${1:-}" = "--measure" ]; then
 fi
 
 # ============================================================================
+# --global: Install response shaping + env tuning globally (~/.claude/)
+# ============================================================================
+if [ "${1:-}" = "--global" ]; then
+  echo ""
+  echo "  context-os --global"
+  echo "  ═══════════════════════════════════════════════════"
+  echo "  Installing response shaping + env tuning to ~/.claude/"
+  echo "  (applies to every project — per-project install still recommended)"
+  echo ""
+
+  GLOBAL_DIR="${HOME}/.claude"
+  mkdir -p "$GLOBAL_DIR"
+
+  # 1. Global CLAUDE.md — only response rules, no repo map (repo map is project-specific)
+  GLOBAL_CLAUDE="${GLOBAL_DIR}/CLAUDE.md"
+  GLOBAL_BLOCK='<!-- context-os:start -->
+# Response rules
+
+- Ultra-concise. No preamble, no recap, no filler.
+- Code > explanation. Show the diff, not why you chose it.
+- 1-2 sentence plan, then execute. Never explain what you'"'"'re about to do.
+- Drop articles. Fragments fine. Be direct.
+- On success: ≤1 sentence of what was done. No celebration.
+- On error: show the error, skip the setup.
+
+# Tool rules
+
+- Use Grep/Glob over shell find/grep — cheaper and faster.
+- Read files with offset+limit when you only need part.
+- Batch edits. One response, multiple files.
+- Use the explorer subagent (Haiku) for symbol lookups if installed per-project.
+
+# Session continuity
+
+- If `.context-os/handoff.md` or a restart packet exists, read it first.
+- Don'"'"'t re-attempt failed approaches from prior sessions.
+<!-- context-os:end -->'
+
+  if [ -f "$GLOBAL_CLAUDE" ]; then
+    if grep -q 'context-os:start' "$GLOBAL_CLAUDE" 2>/dev/null; then
+      python3 -c "
+import re
+text = open('$GLOBAL_CLAUDE').read()
+block = '''$GLOBAL_BLOCK'''
+text = re.sub(r'<!-- context-os:start -->.*?<!-- context-os:end -->', block, text, flags=re.DOTALL)
+open('$GLOBAL_CLAUDE', 'w').write(text)
+" 2>/dev/null && echo "  updated ~/.claude/CLAUDE.md"
+    else
+      printf '\n\n%s\n' "$GLOBAL_BLOCK" >> "$GLOBAL_CLAUDE"
+      echo "  appended to ~/.claude/CLAUDE.md (existing content preserved)"
+    fi
+  else
+    printf '%s\n' "$GLOBAL_BLOCK" > "$GLOBAL_CLAUDE"
+    echo "  created ~/.claude/CLAUDE.md"
+  fi
+
+  # 2. Global settings.json — env tuning
+  GLOBAL_SETTINGS="${GLOBAL_DIR}/settings.json"
+  GLOBAL_ENV='{
+  "env": {
+    "MAX_THINKING_TOKENS": "8000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+  }
+}'
+  if [ -f "$GLOBAL_SETTINGS" ]; then
+    printf '%s' "$GLOBAL_ENV" | python3 -c "
+import json, sys
+try:
+    existing = json.load(open('$GLOBAL_SETTINGS'))
+except:
+    existing = {}
+new = json.load(sys.stdin)
+existing.setdefault('env', {})
+existing['env'].update(new['env'])
+json.dump(existing, open('$GLOBAL_SETTINGS', 'w'), indent=2)
+" 2>/dev/null && echo "  merged env tuning into ~/.claude/settings.json"
+  else
+    printf '%s' "$GLOBAL_ENV" | python3 -m json.tool > "$GLOBAL_SETTINGS" 2>/dev/null || printf '%s\n' "$GLOBAL_ENV" > "$GLOBAL_SETTINGS"
+    echo "  created ~/.claude/settings.json (MAX_THINKING_TOKENS=8000, AUTOCOMPACT=80%)"
+  fi
+
+  echo ""
+  echo "  ✓ global install complete. Active on every new Claude Code session."
+  echo "  Tip: still run the per-project install for noise filtering, slash commands,"
+  echo "       explorer subagent, and statusLine."
+  echo ""
+  exit 0
+fi
+
+# ============================================================================
 # --status: Show what's configured
 # ============================================================================
 if [ "${1:-}" = "--status" ]; then
@@ -152,6 +242,16 @@ if [ "${1:-}" = "--status" ]; then
     check ok "haiku subagents" "$A installed"
   else
     check fail "haiku subagents" "none"
+  fi
+  if [ -f .claude/output-styles/terse.md ]; then
+    check ok "output style" "'terse' installed (/output-style terse)"
+  else
+    check fail "output style" "not installed"
+  fi
+  if [ -f .claude/statusline.sh ]; then
+    check ok "statusLine" "active (.claude/statusline.sh)"
+  else
+    check fail "statusLine" "not installed"
   fi
   if [ -f .claude/settings.local.json ] && grep -q 'hooks' .claude/settings.local.json 2>/dev/null; then
     check ok "hooks" "active (output compression)"
@@ -213,9 +313,11 @@ except: pass
   for agent in explorer; do
     [ -f ".claude/agents/${agent}.md" ] && rm ".claude/agents/${agent}.md" && echo "  removed /.claude/agents/${agent}.md"
   done
+  [ -f .claude/output-styles/terse.md ] && rm .claude/output-styles/terse.md && echo "  removed /.claude/output-styles/terse.md"
+  [ -f .claude/statusline.sh ] && rm .claude/statusline.sh && echo "  removed /.claude/statusline.sh"
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
   # Clean up empty .claude subdirs
-  for d in .claude/commands .claude/agents; do
+  for d in .claude/commands .claude/agents .claude/output-styles; do
     [ -d "$d" ] && [ -z "$(ls -A "$d" 2>/dev/null)" ] && rmdir "$d"
   done
   [ -d .claude ] && [ -z "$(ls -A .claude 2>/dev/null)" ] && rmdir .claude
@@ -282,6 +384,38 @@ ls ./*.csproj &>/dev/null 2>&1 && STACK="${STACK:+$STACK, }dotnet"
 [ -d .terraform ] && STACK="${STACK:+$STACK, }terraform"
 
 [ -n "$STACK" ] && echo "  stack:  $STACK"
+
+# Stack-specific CLAUDE.md hints (terse, high-signal)
+STACK_HINTS=""
+if echo "$STACK" | grep -q 'next.js'; then
+  STACK_HINTS="${STACK_HINTS}
+- Next.js App Router: route files are \`app/**/page.tsx\` + \`app/**/route.ts\`. Server Components by default.
+- Don't touch \`.next/\` — it's build output."
+fi
+if echo "$STACK" | grep -q 'python'; then
+  STACK_HINTS="${STACK_HINTS}
+- Python imports follow package layout; don't add sys.path hacks.
+- Prefer \`pytest -x -q\` for fast fail on tests."
+fi
+if echo "$STACK" | grep -q 'rust'; then
+  STACK_HINTS="${STACK_HINTS}
+- \`cargo check\` is faster than \`cargo build\` for type errors.
+- Use \`cargo test -p <crate>\` to target one crate, not the whole workspace."
+fi
+if echo "$STACK" | grep -q 'go'; then
+  STACK_HINTS="${STACK_HINTS}
+- \`go test ./...\` runs all packages; \`go test ./pkg/foo\` targets one.
+- Prefer table-driven tests; don't generate one test per case."
+fi
+if echo "$STACK" | grep -q 'flutter'; then
+  STACK_HINTS="${STACK_HINTS}
+- Use \`flutter analyze\` before \`flutter test\` — catches most issues without running.
+- \`*.g.dart\` files are generated; never edit them."
+fi
+if echo "$STACK" | grep -q 'docker'; then
+  STACK_HINTS="${STACK_HINTS}
+- \`docker compose\` (v2) not \`docker-compose\` (v1 deprecated)."
+fi
 echo "  source: $SRC_FILES files"
 [ "$NOISE_FILES" -gt 0 ] && echo "  noise:  $NOISE_FILES files"
 echo ""
@@ -336,7 +470,7 @@ fi
 # STEP 1: CLAUDE.md — Response shaping (saves 40-65% output tokens)
 # ============================================================================
 STEP=1
-TOTAL=7
+TOTAL=9
 MARKER_START="<!-- context-os:start -->"
 MARKER_END="<!-- context-os:end -->"
 
@@ -363,6 +497,7 @@ BLOCK="$MARKER_START
 - Use Grep/Glob tools over shell find/grep — they're cheaper.
 - Read files with offset+limit when you only need part.
 - For broad exploration, delegate to the \`explorer\` subagent (runs on Haiku, 15x cheaper).
+$STACK_HINTS
 $REPOMAP
 
 # Session continuity
@@ -608,9 +743,110 @@ AGENTEOF
 echo "  [$STEP/$TOTAL] installed explorer subagent (Haiku — 15x cheaper)"
 
 # ============================================================================
-# STEP 6: Hooks — output compression + session memory (needs binary)
+# STEP 6: Output style — enforces terse responses at every turn
 # ============================================================================
 STEP=6
+mkdir -p .claude/output-styles
+
+cat > .claude/output-styles/terse.md << 'STYLEOF'
+---
+name: terse
+description: Context OS terse output style. Caps every response at the minimum viable shape — no preamble, no recap, no celebration. Use when burning through token budget.
+---
+
+# Response contract
+
+- No preamble. Start with the action or the answer.
+- No recap. The user just wrote the prompt; they remember.
+- No celebration. No "Great!", "", "I've successfully...".
+- No tool announcements. Don't say "I'll use Grep to search" — just search.
+- Show diffs, not explanations.
+- Fragments are fine. Drop articles. Be direct.
+- On success: state what was done in ≤1 sentence. Done.
+- On error: show the error, skip the pre-error context.
+
+# Code rules
+
+- Skip imports in code snippets unless they're the change.
+- Use Grep/Glob before Bash find/grep. Cheaper and faster.
+- Read files with offset+limit when you only need part.
+- One response, multiple files. Batch edits.
+
+# Session rules
+
+- If a restart packet or `.context-os/handoff.md` exists, read it first.
+- Don't re-attempt failed approaches from prior sessions.
+- Use the explorer subagent for symbol lookups and file searches.
+
+# Forbidden
+
+- "Based on my analysis..."
+- "Let me..."
+- "I'll now..."
+- "Here's a summary of what I did..."
+- "Perfect!" / "Excellent!" / "" / "Got it!"
+- Re-explaining code you just wrote
+- Multi-paragraph responses for single-file edits
+STYLEOF
+
+echo "  [$STEP/$TOTAL] installed 'terse' output style (/output-style terse)"
+
+# ============================================================================
+# STEP 7: statusLine — live context + cost visibility in every prompt
+# ============================================================================
+STEP=7
+cat > .claude/statusline.sh << 'SLEOF'
+#!/usr/bin/env bash
+# Context OS statusLine: shows model, git branch, and context budget status.
+# Reads JSON from stdin (Claude Code session context).
+set -euo pipefail
+
+INPUT=$(cat)
+
+# Parse what Claude Code gives us
+MODEL=$(printf '%s' "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('model',{}).get('display_name','?'))" 2>/dev/null || echo "?")
+CWD=$(printf '%s' "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('workspace',{}).get('current_dir','.'))" 2>/dev/null || pwd)
+
+# Git branch (if in repo)
+BRANCH=""
+if command -v git &>/dev/null; then
+  BRANCH=$(cd "$CWD" 2>/dev/null && git branch --show-current 2>/dev/null || echo "")
+fi
+
+# Context OS status
+COS=""
+if [ -f "$CWD/CLAUDE.md" ] && grep -q 'context-os:start' "$CWD/CLAUDE.md" 2>/dev/null; then
+  COS="context-os ✓"
+fi
+
+# Format: model · branch · context-os status
+OUT="$MODEL"
+[ -n "$BRANCH" ] && OUT="$OUT · $BRANCH"
+[ -n "$COS" ] && OUT="$OUT · $COS"
+printf '%s' "$OUT"
+SLEOF
+chmod +x .claude/statusline.sh
+
+# Register in settings.json
+if [ -f .claude/settings.json ]; then
+  python3 -c "
+import json
+p = '.claude/settings.json'
+try:
+    s = json.load(open(p))
+except:
+    s = {}
+s['statusLine'] = {'type': 'command', 'command': 'bash .claude/statusline.sh'}
+json.dump(s, open(p, 'w'), indent=2)
+" 2>/dev/null && echo "  [$STEP/$TOTAL] installed statusLine (model · branch · context-os ✓)" || echo "  [$STEP/$TOTAL] statusLine installed (settings.json merge skipped)"
+else
+  echo "  [$STEP/$TOTAL] statusLine script installed"
+fi
+
+# ============================================================================
+# STEP 8: Hooks — output compression + session memory (needs binary)
+# ============================================================================
+STEP=8
 BIN=""
 if command -v context-os &>/dev/null; then
   BIN="context-os"
@@ -673,9 +909,9 @@ else
 fi
 
 # ============================================================================
-# STEP 7: .gitignore
+# STEP 9: .gitignore
 # ============================================================================
-STEP=7
+STEP=9
 if [ -f .gitignore ]; then
   if ! grep -q '.context-os' .gitignore 2>/dev/null; then
     printf '\n# Context OS local state\n.context-os/\n.claude/settings.local.json\n' >> .gitignore
@@ -709,6 +945,8 @@ else
   printf "  ✓ %-22s %s\n" "noise filtering" "active"
 fi
 printf "  ✓ %-22s %s\n" "response shaping" "40-65% fewer output tokens"
+printf "  ✓ %-22s %s\n" "output style" "'terse' (/output-style terse)"
+printf "  ✓ %-22s %s\n" "statusLine" "live model · branch · context-os ✓"
 printf "  ✓ %-22s %s\n" "repo map" "Claude skips structure scanning"
 printf "  ✓ %-22s %s\n" "thinking cap" "8000 tokens max (saves on simple tasks)"
 printf "  ✓ %-22s %s\n" "early compaction" "at 80% (default is 95%)"

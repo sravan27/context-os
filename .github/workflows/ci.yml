@@ -84,9 +84,16 @@ jobs:
           test -f .claude/commands/context.md || { echo "FAIL: context.md missing"; exit 1; }
           test -f .claude/commands/ship.md || { echo "FAIL: ship.md missing"; exit 1; }
           test -f .claude/agents/explorer.md || { echo "FAIL: explorer.md missing"; exit 1; }
+          test -f .claude/output-styles/terse.md || { echo "FAIL: terse.md missing"; exit 1; }
+          test -f .claude/statusline.sh || { echo "FAIL: statusline.sh missing"; exit 1; }
+          test -x .claude/statusline.sh || { echo "FAIL: statusline.sh not executable"; exit 1; }
           grep -q "context-os:start" CLAUDE.md || { echo "FAIL: CLAUDE.md missing marker"; exit 1; }
           grep -q "node_modules" .claudeignore || { echo "FAIL: .claudeignore missing node_modules"; exit 1; }
           grep -q "MAX_THINKING_TOKENS" .claude/settings.json || { echo "FAIL: settings.json missing MAX_THINKING_TOKENS"; cat .claude/settings.json; exit 1; }
+          grep -q "statusLine" .claude/settings.json || { echo "FAIL: settings.json missing statusLine"; cat .claude/settings.json; exit 1; }
+          # statusLine script should produce output when piped JSON
+          echo '{"model":{"display_name":"test"},"workspace":{"current_dir":"/tmp/cos-install"}}' | bash .claude/statusline.sh > /tmp/sl.out
+          test -s /tmp/sl.out || { echo "FAIL: statusline.sh produced no output"; exit 1; }
 
       - name: Test idempotent re-run
         run: |
@@ -101,9 +108,26 @@ jobs:
           grep -q "CLAUDE.md" /tmp/status.out
           grep -q ".claudeignore" /tmp/status.out
 
+      - name: Test --global install on fake HOME
+        run: |
+          set -x
+          FAKE_HOME=/tmp/cos-fake-home
+          rm -rf "$FAKE_HOME"
+          mkdir -p "$FAKE_HOME"
+          HOME="$FAKE_HOME" bash "$GITHUB_WORKSPACE/setup.sh" --global
+          test -f "$FAKE_HOME/.claude/CLAUDE.md" || { echo "FAIL: global CLAUDE.md missing"; exit 1; }
+          test -f "$FAKE_HOME/.claude/settings.json" || { echo "FAIL: global settings.json missing"; exit 1; }
+          grep -q "context-os:start" "$FAKE_HOME/.claude/CLAUDE.md"
+          grep -q "MAX_THINKING_TOKENS" "$FAKE_HOME/.claude/settings.json"
+          # Idempotent: run again, verify single marker block
+          HOME="$FAKE_HOME" bash "$GITHUB_WORKSPACE/setup.sh" --global
+          test $(grep -c "context-os:start" "$FAKE_HOME/.claude/CLAUDE.md") -eq 1
+
       - name: Test --uninstall preserves user content
         run: |
           cd /tmp/cos-install
           bash "$GITHUB_WORKSPACE/setup.sh" --uninstall
           test ! -f .claudeignore
           test ! -f .claude/settings.json
+          test ! -f .claude/output-styles/terse.md
+          test ! -f .claude/statusline.sh

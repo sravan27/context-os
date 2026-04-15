@@ -1,7 +1,7 @@
 # Context OS
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/sravan27/context-os/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/sravan27/context-os/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-optimized-8A2BE2)](https://claude.com/code)
 
@@ -46,18 +46,22 @@ This is the complete list. If another technique exists that measurably reduces C
 
 | # | Technique | What it does | Measured savings |
 |---|-----------|-------------|------------------|
-| 1 | **Response shaping** (CLAUDE.md) | Instructs Claude to drop preamble, recap, filler, tool announcements, over-explanation | 40-65% output tokens ([benchmark](https://github.com/JuliusBrussee/caveman)) |
-| 2 | **Noise filtering** (.claudeignore) | Blocks Claude from reading `node_modules`, `dist`, `.next`, `target`, 60+ noise dirs and lock files | 30-40% context reduction in Next.js projects |
-| 3 | **Secret exclusion** (.claudeignore) | Explicitly blocks `.env`, `*.pem`, `credentials.json`, SSH keys, AWS creds | Security + tokens |
-| 4 | **Repo map** (CLAUDE.md) | Tells Claude your project structure upfront so it doesn't scan | Saves 3-10 Bash/Glob calls per session |
-| 5 | **Thinking budget cap** (settings.json) | Sets `MAX_THINKING_TOKENS=8000` — caps extended thinking from 32K+ default | 50-70% on simple tasks |
-| 6 | **Early compaction** (settings.json) | Sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80` (default is 95%) | Keeps context small, reduces per-turn cost |
-| 7 | **Slash commands** (.claude/commands/) | `/compact` (save state), `/context` (check usage), `/ship` (test+commit+stop) | Structured efficiency |
-| 8 | **Haiku subagent** (.claude/agents/explorer.md) | Exploration runs on Haiku (15x cheaper than Opus) in isolated context window | ~93% savings on exploration, main context stays clean |
-| 9 | **Output compression** (hooks) | Test/build output wrapped through typed reducers before Claude sees it | 27-70% on test runs (50 passing tests → 1 line) |
-| 10 | **Session memory** (hooks) | Decisions captured into restart packet before compaction/session end | Survives compaction and restarts — never re-explain |
+| 1 | **Response shaping** (CLAUDE.md) | Drops preamble, recap, filler, tool announcements, over-explanation | 40-65% output tokens ([benchmark](https://github.com/JuliusBrussee/caveman)) |
+| 2 | **Output style `terse`** (.claude/output-styles/) | Deeper response contract than CLAUDE.md — enforced at every turn via `/output-style terse` | Stacks with response shaping |
+| 3 | **Noise filtering** (.claudeignore) | Blocks `node_modules`, `dist`, `.next`, `target`, 60+ noise dirs + lock files | 30-40% context reduction in Next.js projects |
+| 4 | **Secret exclusion** (.claudeignore) | Blocks `.env`, `*.pem`, `credentials.json`, SSH keys, AWS creds | Security + tokens |
+| 5 | **Repo map + stack hints** (CLAUDE.md) | Stack-specific hints (Next.js, Python, Rust, Go, Flutter) + directory index | Saves 3-10 Bash/Glob calls per session |
+| 6 | **Thinking budget cap** (settings.json) | `MAX_THINKING_TOKENS=8000` — caps extended thinking from 32K+ default | 50-70% on simple tasks |
+| 7 | **Early compaction** (settings.json) | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80` (default is 95%) | Keeps context small, reduces per-turn cost |
+| 8 | **statusLine** (.claude/statusline.sh) | Live model · branch · context-os ✓ indicator on every prompt | Awareness > guessing |
+| 9 | **Slash commands** (.claude/commands/) | `/compact` (save state), `/context` (check usage), `/ship` (test+commit+stop) | Structured efficiency |
+| 10 | **Haiku subagent** (.claude/agents/explorer.md) | Exploration runs on Haiku (15x cheaper) in isolated context window | ~93% savings on exploration |
+| 11 | **Output compression** (hooks) | Test/build output wrapped through typed reducers before Claude sees it | 27-70% on test runs (50 passing tests → 1 line) |
+| 12 | **Session memory** (hooks) | Decisions captured into restart packet before compaction/session end | Survives compaction and restarts — never re-explain |
 
-Steps 1-8 need only `curl | bash`. Steps 9-10 need the optional binary.
+Steps 1-10 need only `curl | bash`. Steps 11-12 need the optional binary.
+
+**Plus:** `--global` installs response shaping + env tuning to `~/.claude/` (applies to every project).
 
 ## One command install
 
@@ -109,6 +113,14 @@ Adds:
 - **Output compression** — 27-70% reduction on test/build output. `cargo test`, `npm test`, `npx jest`, `pytest`, `go test`, `bun test`, `deno test`, `dotnet test`, `swift test`, `flutter test`, and 32 more commands.
 - **Session memory** — PreCompact hook injects decisions before Claude forgets them. Stop hook writes handoff for manual recovery.
 
+## Global install (apply to every project)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --global
+```
+
+Installs response shaping + env tuning to `~/.claude/` — active on every new Claude Code session, no matter which project. Still run the per-project install to get noise filtering, slash commands, explorer subagent, statusLine, and hooks.
+
 ## Status and uninstall
 
 ```bash
@@ -117,6 +129,17 @@ curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh |
 ```
 
 Uninstall preserves your existing CLAUDE.md content — only the `<!-- context-os -->` block is removed.
+
+## Real benchmark (not speculative)
+
+The `--measure` flag gives you a conservative per-session estimate from math. For actual numbers, run the benchmark against any git repo:
+
+```bash
+git clone https://github.com/sravan27/context-os && cd context-os
+scripts/benchmark.sh /path/to/your/repo
+```
+
+Requires `claude` CLI on PATH. Runs the same task against the repo before and after Context OS install, reads Claude Code's JSON transcript, and reports measured input/output/total token delta with a reduction percentage. Output also written to `/tmp/cos-last-benchmark.json` for CI or further analysis.
 
 ## Manual techniques (can't be automated, but worth knowing)
 
@@ -148,18 +171,22 @@ Most Claude Code optimization tools do one thing well:
 | Technique | Context OS | [caveman](https://github.com/JuliusBrussee/caveman) | [RTK](https://github.com/DiogenesOfSinope/RTK) | [claude-mem](https://github.com/khaliqgant/claude-mem) | [context-mode](https://github.com/brian-woodward/context-mode) |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Response shaping (CLAUDE.md) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Output style enforcement (terse) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Noise filtering (.claudeignore) | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Secret exclusion | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Repo map | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Repo map + stack hints | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Thinking budget cap | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Early compaction threshold | ✅ | ❌ | ❌ | ❌ | ❌ |
+| statusLine (live awareness) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Slash commands | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Haiku subagent (explorer) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Output compression (hooks) | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Session memory | ✅ | ❌ | ❌ | ✅ | ❌ |
 | One-command install | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Global install (`--global`) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Reversible uninstall | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `--measure` (no-install dry run) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Real benchmark script | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 None put them together. You end up installing four tools, maintaining four configs, and still missing techniques that need custom integration (env vars, secret filtering, Haiku subagents).
 
