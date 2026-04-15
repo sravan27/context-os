@@ -1,6 +1,9 @@
 # Context OS
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/sravan27/context-os/releases)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-optimized-8A2BE2)](https://claude.com/code)
 
 **Stop hitting Claude Code usage limits.** Every proven token optimization in one command.
 
@@ -10,6 +13,32 @@ curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh |
 ```
 
 Zero dependencies. Fully reversible. Works with Claude Pro, Max, and API.
+
+## See what you'd save (no install)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --measure
+```
+
+Scans your repo and estimates tokens saved per session. No writes, no config, no install. Sample:
+
+```
+  Source files:            342
+  Noise files:             12,847
+
+  Conservative per-session savings:
+
+  Noise filtering:         ~50K tokens
+  Response shaping:        ~20K tokens
+  Thinking cap (8K):       ~15K tokens
+  Haiku exploration:       ~10K tokens
+  Output compression:      ~8K tokens
+  ────────────────────────────────────
+  TOTAL:                   ~103K tokens/session
+
+  Pro/Max plan:            longer sessions before hitting 5-hr cap
+  API users (Sonnet 4.6):  ~$0.61/session ($12/week @ 20 sessions)
+```
 
 ## What it does, in order
 
@@ -116,10 +145,21 @@ From our own benchmarks in `python/evals/reports/`:
 
 Most Claude Code optimization tools do one thing well:
 
-- [RTK](https://github.com/DiogenesOfSinope/RTK) — CLI output compression (24K★)
-- [Caveman](https://github.com/JuliusBrussee/caveman) — terse CLAUDE.md prompting (20K★)
-- [context-mode](https://github.com/brian-woodward/context-mode) — sandbox isolation (7K★)
-- [claude-mem](https://github.com/khaliqgant/claude-mem) — session memory (48K★)
+| Technique | Context OS | [caveman](https://github.com/JuliusBrussee/caveman) | [RTK](https://github.com/DiogenesOfSinope/RTK) | [claude-mem](https://github.com/khaliqgant/claude-mem) | [context-mode](https://github.com/brian-woodward/context-mode) |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Response shaping (CLAUDE.md) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Noise filtering (.claudeignore) | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Secret exclusion | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Repo map | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Thinking budget cap | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Early compaction threshold | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Slash commands | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Haiku subagent (explorer) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Output compression (hooks) | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Session memory | ✅ | ❌ | ❌ | ✅ | ❌ |
+| One-command install | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Reversible uninstall | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `--measure` (no-install dry run) | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 None put them together. You end up installing four tools, maintaining four configs, and still missing techniques that need custom integration (env vars, secret filtering, Haiku subagents).
 

@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -38,3 +38,68 @@ jobs:
       - name: Run Python evals
         if: matrix.os == 'ubuntu-latest'
         run: python3 python/evals/runners/safe_mode_runner.py
+
+  setup-sh:
+    name: setup.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck --severity=warning setup.sh || true
+
+      - name: Test --measure on fixture
+        run: |
+          mkdir -p /tmp/cos-fixture/{src,node_modules/foo,dist,.next/cache}
+          for i in $(seq 1 100); do touch /tmp/cos-fixture/node_modules/foo/$i.js; done
+          for i in $(seq 1 10); do touch /tmp/cos-fixture/src/$i.ts; done
+          cd /tmp/cos-fixture && git init -q
+          bash "$GITHUB_WORKSPACE/setup.sh" --measure | tee /tmp/measure.out
+          grep -q "TOTAL:" /tmp/measure.out
+          grep -q "tokens/session" /tmp/measure.out
+
+      - name: Test install on fresh fixture
+        run: |
+          rm -rf /tmp/cos-install
+          mkdir -p /tmp/cos-install/src
+          cd /tmp/cos-install && git init -q
+          echo '{"name":"test","dependencies":{"next":"*"}}' > package.json
+          bash "$GITHUB_WORKSPACE/setup.sh" | tee /tmp/install.out
+          test -f CLAUDE.md
+          test -f .claudeignore
+          test -f .claude/settings.json
+          test -f .claude/commands/compact.md
+          test -f .claude/commands/context.md
+          test -f .claude/commands/ship.md
+          test -f .claude/agents/explorer.md
+          grep -q "context-os:start" CLAUDE.md
+          grep -q "node_modules" .claudeignore
+          grep -q "MAX_THINKING_TOKENS" .claude/settings.json
+
+      - name: Test idempotent re-run
+        run: |
+          cd /tmp/cos-install
+          bash "$GITHUB_WORKSPACE/setup.sh"
+          test $(grep -c "context-os:start" CLAUDE.md) -eq 1
+
+      - name: Test --status
+        run: |
+          cd /tmp/cos-install
+          bash "$GITHUB_WORKSPACE/setup.sh" --status | tee /tmp/status.out
+          grep -q "CLAUDE.md" /tmp/status.out
+          grep -q ".claudeignore" /tmp/status.out
+
+      - name: Test --uninstall preserves user content
+        run: |
+          cd /tmp/cos-install
+          bash "$GITHUB_WORKSPACE/setup.sh" --uninstall
+          test ! -f .claudeignore
+          test ! -f .claude/settings.json

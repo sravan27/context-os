@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a non-technique feature (CLI flag, output format, integration).
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the pain, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed change
+      description: What should Context OS do differently?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Is there a workaround today? Why isn't it enough?

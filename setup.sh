@@ -5,7 +5,108 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="1.0.0"
+
+# ============================================================================
+# --measure: Estimate token savings on the current project (shareable)
+# ============================================================================
+if [ "${1:-}" = "--measure" ]; then
+  echo ""
+  echo "  context-os measurement"
+  echo "  ══════════════════════════════════════════"
+
+  # Count noise
+  MEASURE_NOISE=0
+  for dir in node_modules .next dist build out target/debug target/release \
+             __pycache__ .venv venv .tox .mypy_cache .pytest_cache \
+             coverage .nyc_output .gradle vendor Pods .dart_tool \
+             .git/objects .turbo .parcel-cache .cache \
+             .svelte-kit .nuxt .output .vercel .netlify \
+             bower_components jspm_packages DerivedData; do
+    if [ -d "$dir" ]; then
+      C=$(find "$dir" -type f 2>/dev/null | head -50000 | wc -l | tr -d ' ')
+      MEASURE_NOISE=$((MEASURE_NOISE + C))
+    fi
+  done
+
+  # Count source files
+  MEASURE_SRC=$(find . -maxdepth 4 -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.py' -o -name '*.rs' -o -name '*.go' -o -name '*.java' -o -name '*.rb' -o -name '*.swift' -o -name '*.dart' -o -name '*.cs' -o -name '*.cpp' -o -name '*.c' -o -name '*.vue' -o -name '*.svelte' \) \
+    ! -path './node_modules/*' ! -path './dist/*' ! -path './build/*' ! -path './.next/*' \
+    ! -path './target/*' ! -path './.venv/*' ! -path './venv/*' ! -path './vendor/*' \
+    ! -path './__pycache__/*' ! -path './.git/*' ! -path './.cache/*' \
+    2>/dev/null | wc -l | tr -d ' ')
+
+  # Conservative estimates per session. Under-promise, over-deliver.
+  # Claude searches hit ~50-100 noise files per Glob/Grep. ~10 searches/session.
+  # Per search: min(noise_count, 100) files * 100 tokens = up to 10K/search.
+  if [ "$MEASURE_NOISE" -gt 1000 ]; then
+    NOISE_PER_SEARCH=10000
+  elif [ "$MEASURE_NOISE" -gt 100 ]; then
+    NOISE_PER_SEARCH=$((MEASURE_NOISE * 100 / 10))
+  else
+    NOISE_PER_SEARCH=$((MEASURE_NOISE * 50))
+  fi
+  NOISE_PER_SESSION=$((NOISE_PER_SEARCH * 5))  # ~5 searches/session that hit noise
+
+  # Response shaping: 50% output reduction, avg 40K output/session = 20K saved
+  RESPONSE_PER_SESSION=20000
+  # Thinking cap: not every session uses extended thinking. Conservative: 15K avg
+  THINKING_PER_SESSION=15000
+  # Haiku exploration: only when explorer subagent used. Conservative: 10K
+  HAIKU_PER_SESSION=10000
+  # Hook output compression: only for tests/builds. Conservative: 8K
+  HOOK_PER_SESSION=8000
+
+  TOTAL_PER_SESSION=$((NOISE_PER_SESSION + RESPONSE_PER_SESSION + THINKING_PER_SESSION + HAIKU_PER_SESSION + HOOK_PER_SESSION))
+
+  fmt_num() {
+    local n=$1
+    if [ "$n" -ge 1000000 ]; then
+      echo "$(echo "scale=1; $n / 1000000" | bc 2>/dev/null || echo "$((n / 1000000))")M"
+    elif [ "$n" -ge 1000 ]; then
+      echo "$(echo "scale=0; $n / 1000" | bc 2>/dev/null || echo "$((n / 1000))")K"
+    else
+      echo "$n"
+    fi
+  }
+
+  echo ""
+  printf "  %-24s %s\n" "Source files:" "$MEASURE_SRC"
+  printf "  %-24s %s\n" "Noise files:" "$MEASURE_NOISE"
+  echo ""
+  echo "  Conservative per-session savings:"
+  echo ""
+  printf "  %-24s ~%s tokens\n" "Noise filtering:" "$(fmt_num $NOISE_PER_SESSION)"
+  printf "  %-24s ~%s tokens\n" "Response shaping:" "$(fmt_num $RESPONSE_PER_SESSION)"
+  printf "  %-24s ~%s tokens\n" "Thinking cap (8K):" "$(fmt_num $THINKING_PER_SESSION)"
+  printf "  %-24s ~%s tokens\n" "Haiku exploration:" "$(fmt_num $HAIKU_PER_SESSION)"
+  printf "  %-24s ~%s tokens\n" "Output compression:" "$(fmt_num $HOOK_PER_SESSION)"
+  echo "  ────────────────────────────────────"
+  printf "  %-24s ~%s tokens/session\n" "TOTAL:" "$(fmt_num $TOTAL_PER_SESSION)"
+  echo ""
+  echo "  What that means:"
+  echo ""
+  # Pro plan ($20/mo): 5-hour window, ~200K context. Saving ~65K/session
+  # means your context stays under the auto-compact threshold longer.
+  # Sessions per 5-hour window increases ~1.5-2x.
+  # API pricing Sonnet 4.6: ~$3/M input + $15/M output, blended ~$6/M
+  #   → 65K tokens ≈ $0.40/session, $8/week at 20 sessions
+  API_CENTS=$((TOTAL_PER_SESSION * 6 / 10000))  # $6/M = 0.6 cents/K
+  API_DOLLARS=$((API_CENTS / 100))
+  API_DEC=$((API_CENTS % 100))
+  WEEK_CENTS=$((API_CENTS * 20))
+  WEEK_DOLLARS=$((WEEK_CENTS / 100))
+  printf "  %-24s longer sessions before hitting 5-hr cap\n" "Pro/Max plan:"
+  printf "  %-24s ~\$%d.%02d/session (\$%d/week @ 20 sessions)\n" "API users (Sonnet 4.6):" "$API_DOLLARS" "$API_DEC" "$WEEK_DOLLARS"
+  echo ""
+  if [ -f CLAUDE.md ] && grep -q 'context-os:start' CLAUDE.md; then
+    echo "  ✓ Context OS is already installed. Run --status to verify."
+  else
+    echo "  Activate: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash"
+  fi
+  echo ""
+  exit 0
+fi
 
 # ============================================================================
 # --status: Show what's configured

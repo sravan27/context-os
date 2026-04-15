@@ -1,0 +1,51 @@
+name: Technique submission
+description: Propose a Claude Code optimization Context OS is missing.
+labels: ["technique", "needs-benchmark"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## The goal of Context OS is completeness.
+        If a technique measurably reduces Claude Code token consumption, it belongs here.
+        Please back every technique with a reproducible measurement. No vibes.
+  - type: input
+    id: name
+    attributes:
+      label: Technique name
+      placeholder: "Prompt caching for system prompts"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What does it do?
+      description: 1-3 sentences. Mechanism, not marketing.
+    validations:
+      required: true
+  - type: textarea
+    id: benchmark
+    attributes:
+      label: Measurement
+      description: |
+        How did you measure it? Link the script, the harness, or the raw numbers.
+        "Saves ~X tokens on Y workload, measured with Z."
+      placeholder: |
+        Measured on [repo/workload]:
+          before: 42,310 tokens
+          after:  18,722 tokens
+          savings: 55.7%
+        Script: https://github.com/...
+    validations:
+      required: true
+  - type: textarea
+    id: integration
+    attributes:
+      label: How would it fit in setup.sh?
+      description: Is it a file write? A settings.json entry? A hook? A slash command? What would break if users run it twice?
+    validations:
+      required: true
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: Is this already in another tool (RTK, Caveman, claude-mem, etc.)? Link it. We want to credit properly.
