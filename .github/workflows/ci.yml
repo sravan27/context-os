@@ -68,21 +68,25 @@ jobs:
 
       - name: Test install on fresh fixture
         run: |
+          set -x
           rm -rf /tmp/cos-install
           mkdir -p /tmp/cos-install/src
           cd /tmp/cos-install && git init -q
           echo '{"name":"test","dependencies":{"next":"*"}}' > package.json
-          bash "$GITHUB_WORKSPACE/setup.sh" | tee /tmp/install.out
-          test -f CLAUDE.md
-          test -f .claudeignore
-          test -f .claude/settings.json
-          test -f .claude/commands/compact.md
-          test -f .claude/commands/context.md
-          test -f .claude/commands/ship.md
-          test -f .claude/agents/explorer.md
-          grep -q "context-os:start" CLAUDE.md
-          grep -q "node_modules" .claudeignore
-          grep -q "MAX_THINKING_TOKENS" .claude/settings.json
+          bash "$GITHUB_WORKSPACE/setup.sh" 2>&1 | tee /tmp/install.out
+          echo "---FILE TREE---"
+          find . -type f -not -path './.git/*' | sort
+          echo "---CHECKS---"
+          test -f CLAUDE.md || { echo "FAIL: CLAUDE.md missing"; exit 1; }
+          test -f .claudeignore || { echo "FAIL: .claudeignore missing"; exit 1; }
+          test -f .claude/settings.json || { echo "FAIL: .claude/settings.json missing"; exit 1; }
+          test -f .claude/commands/compact.md || { echo "FAIL: compact.md missing"; exit 1; }
+          test -f .claude/commands/context.md || { echo "FAIL: context.md missing"; exit 1; }
+          test -f .claude/commands/ship.md || { echo "FAIL: ship.md missing"; exit 1; }
+          test -f .claude/agents/explorer.md || { echo "FAIL: explorer.md missing"; exit 1; }
+          grep -q "context-os:start" CLAUDE.md || { echo "FAIL: CLAUDE.md missing marker"; exit 1; }
+          grep -q "node_modules" .claudeignore || { echo "FAIL: .claudeignore missing node_modules"; exit 1; }
+          grep -q "MAX_THINKING_TOKENS" .claude/settings.json || { echo "FAIL: settings.json missing MAX_THINKING_TOKENS"; cat .claude/settings.json; exit 1; }
 
       - name: Test idempotent re-run
         run: |
