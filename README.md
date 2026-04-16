@@ -1,7 +1,8 @@
 # Context OS
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/sravan27/context-os/releases)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/sravan27/context-os/releases)
+[![Discussions](https://img.shields.io/github/discussions/sravan27/context-os)](https://github.com/sravan27/context-os/discussions)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-optimized-8A2BE2)](https://claude.com/code)
 
@@ -53,13 +54,17 @@ This is the complete list. If another technique exists that measurably reduces C
 | 5 | **Repo map + stack hints** (CLAUDE.md) | Stack-specific hints (Next.js, Python, Rust, Go, Flutter) + directory index | Saves 3-10 Bash/Glob calls per session |
 | 6 | **Thinking budget cap** (settings.json) | `MAX_THINKING_TOKENS=8000` — caps extended thinking from 32K+ default | 50-70% on simple tasks |
 | 7 | **Early compaction** (settings.json) | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80` (default is 95%) | Keeps context small, reduces per-turn cost |
-| 8 | **statusLine** (.claude/statusline.sh) | Live model · branch · context-os ✓ indicator on every prompt | Awareness > guessing |
-| 9 | **Slash commands** (.claude/commands/) | `/compact` (save state), `/context` (check usage), `/ship` (test+commit+stop) | Structured efficiency |
-| 10 | **Haiku subagent** (.claude/agents/explorer.md) | Exploration runs on Haiku (15x cheaper) in isolated context window | ~93% savings on exploration |
-| 11 | **Output compression** (hooks) | Test/build output wrapped through typed reducers before Claude sees it | 27-70% on test runs (50 passing tests → 1 line) |
-| 12 | **Session memory** (hooks) | Decisions captured into restart packet before compaction/session end | Survives compaction and restarts — never re-explain |
+| 8 | **Prompt caching 1h** (settings.json) | `ENABLE_PROMPT_CACHING_1H=1` — extends cache TTL from 5min to 1hr | Massive on long sessions |
+| 9 | **Traffic control** (settings.json) | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` — kills auto-titling, telemetry pings | Silent token burn eliminated |
+| 10 | **Context cap** (settings.json) | `CLAUDE_CODE_MAX_CONTEXT_TOKENS=150000` — prevents runaway 1M-context sessions | Faster compaction, lower per-turn cost |
+| 11 | **Permission auto-grant** (settings.json) | Pre-approves Read, Glob, Grep, git, test runners — zero confirmation prompts | Eliminates ~200-500 tokens per confirmation |
+| 12 | **statusLine** (.claude/statusline.sh) | Live model · branch · context-os ✓ indicator on every prompt | Awareness > guessing |
+| 13 | **Slash commands** (.claude/commands/) | `/compact` (save state), `/context` (check usage), `/ship` (test+commit+stop), `/cheap` (run on Haiku) | Structured efficiency |
+| 14 | **Haiku subagent** (.claude/agents/explorer.md) | Exploration runs on Haiku (15x cheaper) in isolated context window | ~93% savings on exploration |
+| 15 | **Output compression** (hooks) | Test/build output wrapped through typed reducers before Claude sees it | 27-70% on test runs (50 passing tests → 1 line) |
+| 16 | **Session memory** (hooks) | Decisions captured into restart packet before compaction/session end | Survives compaction and restarts — never re-explain |
 
-Steps 1-10 need only `curl | bash`. Steps 11-12 need the optional binary.
+Steps 1-14 need only `curl | bash`. Steps 15-16 need the optional binary.
 
 **Plus:** `--global` installs response shaping + env tuning to `~/.claude/` (applies to every project).
 
@@ -191,8 +196,12 @@ Most Claude Code optimization tools do one thing well:
 | Repo map + stack hints | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Thinking budget cap | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Early compaction threshold | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Prompt caching 1h TTL | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Non-essential traffic disabled | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Context window cap (150K) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Permission auto-granting | ✅ | ❌ | ❌ | ❌ | ❌ |
 | statusLine (live awareness) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Slash commands | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Slash commands (+`/cheap`) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Haiku subagent (explorer) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Output compression (hooks) | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Session memory | ✅ | ❌ | ❌ | ✅ | ❌ |

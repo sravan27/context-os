@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -170,7 +170,10 @@ open('$GLOBAL_CLAUDE', 'w').write(text)
   GLOBAL_ENV='{
   "env": {
     "MAX_THINKING_TOKENS": "8000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
+    "ENABLE_PROMPT_CACHING_1H": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "150000"
   }
 }'
   if [ -f "$GLOBAL_SETTINGS" ]; then
@@ -231,6 +234,12 @@ if [ "${1:-}" = "--status" ]; then
   else
     check fail "env tuning" "not configured"
   fi
+  if [ -f .claude/settings.json ] && grep -q 'allowedTools' .claude/settings.json 2>/dev/null; then
+    AT=$(python3 -c "import json; print(len(json.load(open('.claude/settings.json')).get('allowedTools',[])))" 2>/dev/null || echo "?")
+    check ok "allowed tools" "$AT pre-approved (zero prompts)"
+  else
+    check fail "allowed tools" "not configured"
+  fi
   if [ -d .claude/commands ] && ls .claude/commands/*.md &>/dev/null; then
     C=$(ls .claude/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
     check ok "slash commands" "$C installed"
@@ -287,6 +296,7 @@ try:
     if 'env' in s and 'MAX_THINKING_TOKENS' in s.get('env', {}):
         s.pop('env', None)
         s.pop('statusLine', None)
+        s.pop('allowedTools', None)
         if s:
             json.dump(s, open('.claude/settings.json', 'w'), indent=2)
         else:
@@ -307,7 +317,24 @@ try:
 except: pass
 " 2>/dev/null && echo "  removed hooks"
   fi
-  for cmd in compact context ship; do
+  if [ -f .claude/settings.json ]; then
+    python3 -c "
+import json
+try:
+    s = json.load(open('.claude/settings.json'))
+    cos_tools = ['Read','Glob','Grep','Bash(git status*)','Bash(git diff*)','Bash(git log*)','Bash(cargo test*)','Bash(cargo check*)','Bash(npm test*)','Bash(npx jest*)','Bash(pytest*)','Bash(python -m pytest*)','Bash(go test*)','Bash(bun test*)','Bash(deno test*)']
+    if 'allowedTools' in s:
+        s['allowedTools'] = [t for t in s['allowedTools'] if t not in cos_tools]
+        if not s['allowedTools']:
+            del s['allowedTools']
+    if s:
+        json.dump(s, open('.claude/settings.json', 'w'), indent=2)
+    else:
+        import os; os.remove('.claude/settings.json')
+except: pass
+" 2>/dev/null && echo "  removed allowedTools from settings.json"
+  fi
+  for cmd in compact context ship cheap; do
     [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
   done
   for agent in explorer; do
@@ -470,7 +497,7 @@ fi
 # STEP 1: CLAUDE.md — Response shaping (saves 40-65% output tokens)
 # ============================================================================
 STEP=1
-TOTAL=9
+TOTAL=10
 MARKER_START="<!-- context-os:start -->"
 MARKER_END="<!-- context-os:end -->"
 
@@ -638,7 +665,7 @@ else
 fi
 
 # ============================================================================
-# STEP 3: .claude/settings.json — Env vars (caps thinking/output cost)
+# STEP 3: .claude/settings.json — Env vars (thinking cap, prompt caching, traffic control)
 # ============================================================================
 STEP=3
 mkdir -p .claude
@@ -648,7 +675,10 @@ SETTINGS_JSON=".claude/settings.json"
 ENV_SETTINGS='{
   "env": {
     "MAX_THINKING_TOKENS": "8000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
+    "ENABLE_PROMPT_CACHING_1H": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "150000"
   }
 }'
 
@@ -670,9 +700,52 @@ else
 fi
 
 # ============================================================================
-# STEP 4: Slash commands — /compact, /context, /ship
+# STEP 4: Permission auto-granting — pre-approve safe tools
 # ============================================================================
 STEP=4
+ALLOWED_TOOLS='[
+  "Read",
+  "Glob",
+  "Grep",
+  "Bash(git status*)",
+  "Bash(git diff*)",
+  "Bash(git log*)",
+  "Bash(cargo test*)",
+  "Bash(cargo check*)",
+  "Bash(npm test*)",
+  "Bash(npx jest*)",
+  "Bash(pytest*)",
+  "Bash(python -m pytest*)",
+  "Bash(go test*)",
+  "Bash(bun test*)",
+  "Bash(deno test*)"
+]'
+
+if [ -f "$SETTINGS_JSON" ]; then
+  printf '%s' "$ALLOWED_TOOLS" | python3 -c "
+import json, sys
+try:
+    existing = json.load(open('$SETTINGS_JSON'))
+except:
+    existing = {}
+new_tools = json.load(sys.stdin)
+old_tools = existing.get('allowedTools', [])
+merged = list(old_tools)
+for t in new_tools:
+    if t not in merged:
+        merged.append(t)
+existing['allowedTools'] = merged
+json.dump(existing, open('$SETTINGS_JSON', 'w'), indent=2)
+" 2>/dev/null && echo "  [$STEP/$TOTAL] merged 15 allowed tools into settings.json (zero confirmation prompts)" || echo "  [$STEP/$TOTAL] allowedTools merge failed"
+else
+  printf '{"allowedTools": %s}' "$ALLOWED_TOOLS" | python3 -m json.tool > "$SETTINGS_JSON" 2>/dev/null || printf '{"allowedTools": %s}\n' "$ALLOWED_TOOLS" > "$SETTINGS_JSON"
+  echo "  [$STEP/$TOTAL] created settings.json with allowed tools"
+fi
+
+# ============================================================================
+# STEP 5: Slash commands — /compact, /context, /ship, /cheap
+# ============================================================================
+STEP=5
 mkdir -p .claude/commands
 
 cat > .claude/commands/compact.md << 'CMDEOF'
@@ -708,12 +781,18 @@ Ship the current changes:
 No explanations. No celebration. Just ship or fail.
 CMDEOF
 
-echo "  [$STEP/$TOTAL] installed 3 slash commands (/compact, /context, /ship)"
+cat > .claude/commands/cheap.md << 'CMDEOF'
+Run this task using the explorer subagent (Haiku model — 15x cheaper than Sonnet/Opus). This is for tasks where quality can be traded for cost: formatting, simple refactors, file moves, boilerplate generation, documentation.
+
+$ARGUMENTS
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 4 slash commands (/compact, /context, /ship, /cheap)"
 
 # ============================================================================
-# STEP 5: Haiku subagent — 15x cheaper than Opus for exploration
+# STEP 6: Haiku subagent — 15x cheaper than Opus for exploration
 # ============================================================================
-STEP=5
+STEP=6
 mkdir -p .claude/agents
 
 cat > .claude/agents/explorer.md << 'AGENTEOF'
@@ -743,9 +822,9 @@ AGENTEOF
 echo "  [$STEP/$TOTAL] installed explorer subagent (Haiku — 15x cheaper)"
 
 # ============================================================================
-# STEP 6: Output style — enforces terse responses at every turn
+# STEP 7: Output style — enforces terse responses at every turn
 # ============================================================================
-STEP=6
+STEP=7
 mkdir -p .claude/output-styles
 
 cat > .claude/output-styles/terse.md << 'STYLEOF'
@@ -792,9 +871,9 @@ STYLEOF
 echo "  [$STEP/$TOTAL] installed 'terse' output style (/output-style terse)"
 
 # ============================================================================
-# STEP 7: statusLine — live context + cost visibility in every prompt
+# STEP 8: statusLine — live context + cost visibility in every prompt
 # ============================================================================
-STEP=7
+STEP=8
 cat > .claude/statusline.sh << 'SLEOF'
 #!/usr/bin/env bash
 # Context OS statusLine: shows model, git branch, and context budget status.
@@ -844,9 +923,9 @@ else
 fi
 
 # ============================================================================
-# STEP 8: Hooks — output compression + session memory (needs binary)
+# STEP 9: Hooks — output compression + session memory (needs binary)
 # ============================================================================
-STEP=8
+STEP=9
 BIN=""
 if command -v context-os &>/dev/null; then
   BIN="context-os"
@@ -909,9 +988,9 @@ else
 fi
 
 # ============================================================================
-# STEP 9: .gitignore
+# STEP 10: .gitignore
 # ============================================================================
-STEP=9
+STEP=10
 if [ -f .gitignore ]; then
   if ! grep -q '.context-os' .gitignore 2>/dev/null; then
     printf '\n# Context OS local state\n.context-os/\n.claude/settings.local.json\n' >> .gitignore
@@ -950,7 +1029,11 @@ printf "  ✓ %-22s %s\n" "statusLine" "live model · branch · context-os ✓"
 printf "  ✓ %-22s %s\n" "repo map" "Claude skips structure scanning"
 printf "  ✓ %-22s %s\n" "thinking cap" "8000 tokens max (saves on simple tasks)"
 printf "  ✓ %-22s %s\n" "early compaction" "at 80% (default is 95%)"
-printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship"
+printf "  ✓ %-22s %s\n" "prompt caching 1h" "5min→1hr TTL (huge on long sessions)"
+printf "  ✓ %-22s %s\n" "traffic control" "non-essential API calls disabled"
+printf "  ✓ %-22s %s\n" "context cap" "150K max (prevents runaway sessions)"
+printf "  ✓ %-22s %s\n" "allowed tools" "15 pre-approved (zero confirmation prompts)"
+printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship /cheap"
 printf "  ✓ %-22s %s\n" "haiku subagent" "/explorer for cheap exploration"
 printf "  ✓ %-22s %s\n" "secret filtering" ".env, *.pem, credentials blocked"
 
