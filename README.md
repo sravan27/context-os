@@ -1,256 +1,175 @@
 # Context OS
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/sravan27/context-os/releases)
-[![Discussions](https://img.shields.io/github/discussions/sravan27/context-os)](https://github.com/sravan27/context-os/discussions)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-optimized-8A2BE2)](https://claude.com/code)
 
-**Stop hitting Claude Code usage limits.** Every proven token optimization in one command.
-
-```bash
-cd your-project
-curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
-```
-
-Zero dependencies. Fully reversible. Works with Claude Pro, Max, and API.
-
-## See what you'd save (no install)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --measure
-```
-
-Scans your repo and estimates tokens saved per session. No writes, no config, no install. Sample:
-
-```
-  Source files:            342
-  Noise files:             12,847
-
-  Conservative per-session savings:
-
-  Noise filtering:         ~50K tokens
-  Response shaping:        ~20K tokens
-  Thinking cap (8K):       ~15K tokens
-  Haiku exploration:       ~10K tokens
-  Output compression:      ~8K tokens
-  ────────────────────────────────────
-  TOTAL:                   ~103K tokens/session
-
-  Pro/Max plan:            longer sessions before hitting 5-hr cap
-  API users (Sonnet 4.6):  ~$0.61/session ($12/week @ 20 sessions)
-```
-
-## What it does, in order
-
-This is the complete list. If another technique exists that measurably reduces Claude Code token consumption and we're missing it, [open an issue](https://github.com/sravan27/context-os/issues).
-
-| # | Technique | What it does | Measured savings |
-|---|-----------|-------------|------------------|
-| 1 | **Response shaping** (CLAUDE.md) | Drops preamble, recap, filler, tool announcements, over-explanation | 40-65% output tokens ([benchmark](https://github.com/JuliusBrussee/caveman)) |
-| 2 | **Output style `terse`** (.claude/output-styles/) | Deeper response contract than CLAUDE.md — enforced at every turn via `/output-style terse` | Stacks with response shaping |
-| 3 | **Noise filtering** (.claudeignore) | Blocks `node_modules`, `dist`, `.next`, `target`, 60+ noise dirs + lock files | 30-40% context reduction in Next.js projects |
-| 4 | **Secret exclusion** (.claudeignore) | Blocks `.env`, `*.pem`, `credentials.json`, SSH keys, AWS creds | Security + tokens |
-| 5 | **Repo map + stack hints** (CLAUDE.md) | Stack-specific hints (Next.js, Python, Rust, Go, Flutter) + directory index | Saves 3-10 Bash/Glob calls per session |
-| 6 | **Thinking budget cap** (settings.json) | `MAX_THINKING_TOKENS=8000` — caps extended thinking from 32K+ default | 50-70% on simple tasks |
-| 7 | **Early compaction** (settings.json) | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80` (default is 95%) | Keeps context small, reduces per-turn cost |
-| 8 | **Prompt caching 1h** (settings.json) | `ENABLE_PROMPT_CACHING_1H=1` — extends cache TTL from 5min to 1hr | Massive on long sessions |
-| 9 | **Traffic control** (settings.json) | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` — kills auto-titling, telemetry pings | Silent token burn eliminated |
-| 10 | **Context cap** (settings.json) | `CLAUDE_CODE_MAX_CONTEXT_TOKENS=150000` — prevents runaway 1M-context sessions | Faster compaction, lower per-turn cost |
-| 11 | **Permission auto-grant** (settings.json) | Pre-approves Read, Glob, Grep, git, test runners — zero confirmation prompts | Eliminates ~200-500 tokens per confirmation |
-| 12 | **statusLine** (.claude/statusline.sh) | Live model · branch · context-os ✓ indicator on every prompt | Awareness > guessing |
-| 13 | **Slash commands** (.claude/commands/) | `/compact` (save state), `/context` (check usage), `/ship` (test+commit+stop), `/cheap` (run on Haiku) | Structured efficiency |
-| 14 | **Haiku subagent** (.claude/agents/explorer.md) | Exploration runs on Haiku (15x cheaper) in isolated context window | ~93% savings on exploration |
-| 15 | **Output compression** (hooks) | Test/build output wrapped through typed reducers before Claude sees it | 27-70% on test runs (50 passing tests → 1 line) |
-| 16 | **Session memory** (hooks) | Decisions captured into restart packet before compaction/session end | Survives compaction and restarts — never re-explain |
-
-Steps 1-14 need only `curl | bash`. Steps 15-16 need the optional binary.
-
-**Plus:** `--global` installs response shaping + env tuning to `~/.claude/` (applies to every project).
-
-## One command install
+Context OS is a curated set of token optimizations for Claude Code, packaged as an idempotent, reversible installer. It writes `CLAUDE.md`, `.claudeignore`, `settings.json`, slash commands, an output style, a statusLine, a Haiku subagent, and three zero-dependency Python hooks (dedup guard, loop guard, session profiler) into your project. Not a wrapper, not a proxy, no runtime dependency besides `python3` for the hooks (with an optional Rust binary for two additional hook-based techniques).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
 ```
 
-Sample output:
+## What it installs
 
+Nineteen techniques, grouped by delivery mechanism. Evidence column is honest about where each number comes from.
+
+| # | Technique | Mechanism | Evidence |
+|---|-----------|-----------|----------|
+| 1 | Response shaping | `CLAUDE.md` directives (drop preamble, recap, tool announcements) | Third-party benchmark ([caveman](https://github.com/JuliusBrussee/caveman)); ablation pending |
+| 2 | Output style `terse` | `.claude/output-styles/terse.md` invoked via `/output-style terse` | [Documented behavior](https://docs.claude.com/en/docs/claude-code/output-styles) |
+| 3 | Noise filtering | `.claudeignore` with 60+ patterns (`node_modules`, `dist`, `.next`, `target`) | Measured per-repo via `--measure`; end-to-end in [METHODOLOGY.md](docs/METHODOLOGY.md) |
+| 4 | Secret exclusion | `.claudeignore` blocks `.env`, `*.pem`, `credentials.json`, SSH/AWS | Documented behavior |
+| 5 | Repo map + stack hints | `CLAUDE.md` block generated from stack detection | Ablation pending |
+| 6 | Thinking budget cap | `MAX_THINKING_TOKENS=8000` in `settings.json` | [Documented env var](https://docs.claude.com/en/docs/claude-code/settings#environment-variables) |
+| 7 | Early compaction | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80` (default 95) | Documented env var |
+| 8 | Prompt caching 1h TTL | `ENABLE_PROMPT_CACHING_1H=1` | [Documented env var](https://docs.claude.com/en/docs/claude-code/settings#environment-variables) |
+| 9 | Non-essential traffic off | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | Documented env var |
+| 10 | Context cap | `CLAUDE_CODE_MAX_CONTEXT_TOKENS=150000` | Documented env var |
+| 11 | Permission auto-grant | `settings.json` allowlist for Read/Glob/Grep/git/test runners | Documented behavior |
+| 12 | statusLine | `.claude/statusline.sh` (model · branch · context-os marker) | Documented behavior |
+| 13 | Slash commands | `/compact`, `/context`, `/ship`, `/cheap` in `.claude/commands/` | Documented behavior |
+| 14 | Haiku subagent | `.claude/agents/explorer.md` delegates exploration to Haiku | Model pricing ratio (Sonnet:Haiku); ablation pending |
+| 15 | **Dedup guard** | PreToolUse hook: blocks duplicate `Read`/`Glob`/`Grep` within 10min | Smoke-tested in CI; session-profile reports list how many duplicates were caught |
+| 16 | **Loop guard** | PreToolUse hook: warns at 5 edits, blocks at 8 edits on same file per session | Smoke-tested in CI; addresses a pattern called out in Claude Code best-practices |
+| 17 | **Session profiler** | Stop hook: writes per-session token breakdown to `.context-os/session-reports/` — surfaces duplicate tool calls, edit loops, oversized results | Deterministic transcript parser; no telemetry phones home |
+| 18 | Output compression (Rust) | PostToolUse hook wraps test/build output through typed reducers | Measured on 50-test cargo fixture (see METHODOLOGY.md §4) |
+| 19 | Session memory (Rust) | PreCompact + Stop hooks write restart packet | Measured on fail-edit-pass cycle (see METHODOLOGY.md §5) |
+
+Techniques 1–17 install via `setup.sh` (shell + Python stdlib only). Techniques 18–19 require the optional Rust binary.
+
+## What it doesn't do
+
+- No LLM routing, model swapping, or prompt rewriting.
+- No proxy in front of Claude Code. Claude Code talks to Anthropic directly.
+- No telemetry. No phone-home. No analytics. Read `setup.sh`.
+- No attempt to outguess Anthropic's defaults where defaults are reasonable.
+
+## Install
+
+Per-project (recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
 ```
-  context-os v0.3.0
-  ═══════════════════════════════════════════════════
-  Every proven Claude Code token optimization
-  in one command. Zero dependencies. Reversible.
 
-  scanning project...
-  stack:  node, typescript, next.js
-  source: 342 files
-  noise:  12,847 files
+Global (response shaping + env vars to `~/.claude/`, applies to every project):
 
-  [1/7] created CLAUDE.md (response shaping + repo map)
-  [2/7] created .claudeignore (84 patterns, secrets blocked)
-  [3/7] created settings.json (MAX_THINKING_TOKENS=8000, AUTOCOMPACT=80%)
-  [4/7] installed 3 slash commands (/compact, /context, /ship)
-  [5/7] installed explorer subagent (Haiku — 15x cheaper)
-  [6/7] hooks skipped (needs binary — optional)
-  [7/7] added .context-os/ to .gitignore
-
-  ── what's active ───────────────────────────────────
-
-  ✓ noise filtering        12,847 files hidden (~2.5M tokens/search)
-  ✓ response shaping       40-65% fewer output tokens
-  ✓ repo map               Claude skips structure scanning
-  ✓ thinking cap           8000 tokens max (saves on simple tasks)
-  ✓ early compaction       at 80% (default is 95%)
-  ✓ slash commands         /compact /context /ship
-  ✓ haiku subagent         /explorer for cheap exploration
-  ✓ secret filtering       .env, *.pem, credentials blocked
+```bash
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --global
 ```
 
-## With hooks (adds 2 more optimizations)
+With the Rust binary (adds techniques 18–19, output compression + session memory):
 
 ```bash
 cargo install --git https://github.com/sravan27/context-os --path apps/cli
 context-os init
 ```
 
-Adds:
-- **Output compression** — 27-70% reduction on test/build output. `cargo test`, `npm test`, `npx jest`, `pytest`, `go test`, `bun test`, `deno test`, `dotnet test`, `swift test`, `flutter test`, and 32 more commands.
-- **Session memory** — PreCompact hook injects decisions before Claude forgets them. Stop hook writes handoff for manual recovery.
+Stack auto-detection covers: Node/TypeScript, Next.js, Python, Rust, Go, Flutter/Dart. Stack-specific hints are appended to `CLAUDE.md`; generic hints otherwise.
 
-## Global install (apply to every project)
+## Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --global
-```
-
-Installs response shaping + env tuning to `~/.claude/` — active on every new Claude Code session, no matter which project. Still run the per-project install to get noise filtering, slash commands, explorer subagent, statusLine, and hooks.
-
-## Status and uninstall
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --status
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 ```
 
-Uninstall preserves your existing CLAUDE.md content — only the `<!-- context-os -->` block is removed.
+Removes only the `<!-- context-os -->` block from `CLAUDE.md` and files Context OS wrote. Pre-existing content is preserved. Idempotent.
 
-## Real benchmark (not speculative)
+## Measure
 
-The `--measure` flag gives you a conservative per-session estimate from math. For actual numbers, run the benchmark against any git repo:
+Dry-run estimator (no writes, no install):
 
 ```bash
-git clone https://github.com/sravan27/context-os && cd context-os
-scripts/benchmark.sh /path/to/your/repo
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --measure
 ```
 
-Requires `claude` CLI on PATH. Runs the same task against the repo before and after Context OS install, reads Claude Code's JSON transcript, and reports measured input/output/total token delta with a reduction percentage. Output also written to `/tmp/cos-last-benchmark.json` for CI or further analysis.
+Scans the repo, counts source vs. noise files, and estimates per-session token savings from static config (noise filtering, thinking cap, response shaping, output compression). Output is an estimate from file counts, not a measurement of a live session.
 
-## Manual techniques (can't be automated, but worth knowing)
-
-Context OS automates the things that can be automated. These are the manual techniques that round out the optimization stack:
-
-- **`/clear`** between unrelated tasks. Stale context costs tokens on every message.
-- **`/btw [question]`** for side questions that don't need to persist. Up to 50% savings vs asking in the main thread.
-- **`/compact [instructions]`** to direct what to preserve: `/compact Focus on API changes`.
-- **Plan mode** (`Shift+Tab`) for exploration without execution. Eliminates trial-and-error tokens.
-- **Specific prompting.** `fix the null check in auth.ts:42` vs `improve the auth code`.
-- **`@filename`** to reference files directly instead of making Claude search.
-- **Writer/Reviewer pattern.** Session 1 implements. Fresh session 2 reviews. Avoids context bias.
-- **Use the explorer subagent.** Tell Claude: "use the explorer subagent to find all callers of `authenticate`".
-
-## Measured results
-
-From our own benchmarks in `python/evals/reports/`:
-
-**End-to-end (`scripts/benchmark.sh`, real `claude --print` invocations):**
-
-| Metric | Before | After | Delta |
-|---|---:|---:|---:|
-| Input tokens | 5 | 4 | -1 |
-| Cached reads | 74,064 | 48,182 | −25,882 |
-| Output tokens | 466 | 294 | −172 |
-| **Total tokens** | **79,790** | **54,036** | **−32%** |
-| **Cost (USD)** | **$0.049** | **$0.040** | **−18.8%** |
-
-That's a trivial 2-file fixture (`/tmp/cos-bench-test`: README + one `.js` file). On real repos with actual noise (`node_modules`, `dist`, `.next`), reductions get bigger, not smaller. Reproduce: `scripts/benchmark.sh /path/to/your/repo --model sonnet`.
-
-**Other benchmarks:**
-
-- **71% reduction** on 50-test cargo output (48 passing tests collapsed, 2 failures preserved)
-- **100% protected string recall** — no errors, paths, or versions dropped
-- **5/5 concurrent PostToolUse writes** captured (lockfile prevents race conditions)
-- **Full fail-edit-pass cycle** — decisions survive compaction with rationale intact
-- **42 command patterns** matched including `cd /path && RUST_BACKTRACE=1 cargo test`
-
-## Why this exists
-
-Most Claude Code optimization tools do one thing well:
-
-| Technique | Context OS | [caveman](https://github.com/JuliusBrussee/caveman) | [RTK](https://github.com/DiogenesOfSinope/RTK) | [claude-mem](https://github.com/khaliqgant/claude-mem) | [context-mode](https://github.com/brian-woodward/context-mode) |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Response shaping (CLAUDE.md) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Output style enforcement (terse) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Noise filtering (.claudeignore) | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Secret exclusion | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Repo map + stack hints | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Thinking budget cap | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Early compaction threshold | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Prompt caching 1h TTL | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Non-essential traffic disabled | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Context window cap (150K) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Permission auto-granting | ✅ | ❌ | ❌ | ❌ | ❌ |
-| statusLine (live awareness) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Slash commands (+`/cheap`) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Haiku subagent (explorer) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Output compression (hooks) | ✅ | ❌ | ✅ | ❌ | ❌ |
-| Session memory | ✅ | ❌ | ❌ | ✅ | ❌ |
-| One-command install | ✅ | ❌ | ✅ | ✅ | ❌ |
-| Global install (`--global`) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Reversible uninstall | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `--measure` (no-install dry run) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Real benchmark script | ✅ | ❌ | ❌ | ❌ | ❌ |
-
-None put them together. You end up installing four tools, maintaining four configs, and still missing techniques that need custom integration (env vars, secret filtering, Haiku subagents).
-
-Context OS is one command. Every proven technique. If a new technique emerges, we add it here — you re-run the one curl command.
-
-## Limitations
-
-- Does not bypass Anthropic usage limits. Makes them hurt less.
-- Response shaping effectiveness varies: 40-65% on explanation-heavy tasks, 13-21% on structured code.
-- Haiku subagent quality varies by task. For complex reasoning, use the main session.
-- Hook-based compression depends on Claude Code hook availability (PreToolUse, PostToolUse, PreCompact, SessionStart, Stop).
-- The 12-15% overhead from our CLAUDE.md block pays for itself in 1-2 turns on any non-trivial session.
-
-## Verify setup
+Status check:
 
 ```bash
-context-os doctor   # if binary installed
-# or
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --status
 ```
 
-## Development
+## Benchmarks
+
+Methodology: [docs/METHODOLOGY.md](docs/METHODOLOGY.md). Raw reports: [python/evals/reports/](python/evals/reports/).
+
+End-to-end measurement on a 2-file fixture (`/tmp/cos-bench-test`: one README and one `.js` file) via `scripts/benchmark.sh`, running the identical prompt through `claude --print` before and after install:
+
+| Metric | Before | After | Delta |
+|---|---:|---:|---:|
+| Input tokens | 5 | 4 | −1 |
+| Cached reads | 74,064 | 48,182 | −25,882 |
+| Output tokens | 466 | 294 | −172 |
+| Total tokens | 79,790 | 54,036 | −32.3% |
+| Cost (USD, Sonnet 4.6) | $0.049 | $0.040 | −18.8% |
+
+This is a trivial fixture. It is the floor, not the claim. A 2-file repo has almost nothing to filter; the 32% reduction comes mostly from response shaping and the thinking cap. On real repos with `node_modules`, `dist`, lockfiles, and longer sessions, the noise filtering and prompt caching contributions grow substantially. Reproduce against any repo:
+
+```bash
+git clone https://github.com/sravan27/context-os && cd context-os
+scripts/benchmark.sh /path/to/your/repo --model sonnet
+```
+
+Requires `claude` on `PATH`. Results written to `/tmp/cos-last-benchmark.json`.
+
+Component-level measurements (see METHODOLOGY.md for each):
+
+- Output compression: 71% token reduction on 50-test cargo fixture; 48 passing tests collapsed to one line, 2 failures preserved verbatim.
+- Protected-string recall: 100% on the reducer test corpus (paths, errors, versions).
+- Concurrent writes: 5/5 PostToolUse writes captured under lockfile.
+- Compaction survival: decisions and rationale survive a fail-edit-pass cycle across compaction boundary.
+- Command pattern coverage: 42 test/build invocations matched including `cd /x && RUST_BACKTRACE=1 cargo test`.
+
+## Architecture
+
+`setup.sh` is a single shell script that writes 14 config-only techniques plus 3 Python hooks. It detects stack, generates `CLAUDE.md` with a `<!-- context-os -->` block, writes `.claudeignore`, merges `.claude/settings.json`, drops slash commands / output style / statusLine / explorer subagent into `.claude/`, and installs `.claude/hooks/{dedup_guard,loop_guard,session_profile}.py` with a merged entry in `.claude/settings.local.json`.
+
+The Python hooks are zero-dependency (stdlib only), fail-open on any error (never break a user session), and store per-session state under `~/.context-os/state/`. Each hook is auditable — cat it and read 100 lines.
+
+The optional Rust binary (`apps/cli`) installs two additional hooks wired in `hooks.json`:
+
+- `PostToolUse` (hooks.json:12) for test/build output compression via reducer-engine.
+- `PreCompact` (hooks.json:38) and `Stop` (hooks.json:51) for session memory handoff.
+
+Rust crates: `reducer-engine` (typed output compression), `session-memory` (handoff writer), `token-estimator`, `config`, `telemetry` (local-only; writes to `.context-os/`, never leaves machine).
+
+Manual techniques not automated but documented in `CLAUDE.md`: `/clear` between tasks, `/btw` for side questions, `/compact [instructions]`, plan mode (`Shift+Tab`), specific prompting, `@filename` references, writer/reviewer split, explicit explorer-subagent delegation.
+
+## Contributing
+
+To add a technique, open a PR with:
+
+1. The config change (or hook code).
+2. A test in `python/evals/` or `tests/` that exercises it.
+3. An entry in the Evidence column pointing to a measurement or documented behavior. "Ablation pending" is acceptable for new entries; "this seems like it should help" is not.
+
+Tests:
 
 ```bash
 cargo test
 python3 python/evals/runners/safe_mode_runner.py
 python3 python/evals/runners/compaction_survival_runner.py
+scripts/benchmark.sh /tmp/cos-bench-test --model sonnet
 ```
 
-## Contributing
+## Limitations
 
-If you know a Claude Code optimization technique we're missing, please [open an issue](https://github.com/sravan27/context-os/issues) or send a PR. The goal is completeness — if a technique measurably reduces token consumption, it belongs here.
+- Does not bypass usage limits.
+- Response shaping effectiveness varies by task: 40–65% on explanation-heavy, 13–21% on structured code generation (third-party measurement; our ablation pending).
+- Hook-based techniques depend on Claude Code exposing PreToolUse, PostToolUse, PreCompact, SessionStart, Stop.
+- The `<!-- context-os -->` CLAUDE.md block costs ~12–15% input overhead per turn. Amortized across a session, it pays back in 1–2 turns on non-trivial repos.
 
-## Credits
+## Acknowledgments
 
-Builds on research from:
-- [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) — caveman prompting benchmark
-- [drona23/claude-token-efficient](https://github.com/drona23/claude-token-efficient) — 63% output reduction measurements
-- [Anthropic Claude Code docs](https://code.claude.com/docs/en/best-practices) — official best practices, env vars, hooks reference
-- Community benchmarks at claudecodecamp.com on prompt caching
+- [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) — response shaping benchmark.
+- [Anthropic Claude Code documentation](https://docs.claude.com/en/docs/claude-code) — env vars, hooks, output styles, subagents.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
+
+## For the Claude Code team
+
+If you work on Claude Code at Anthropic: see [docs/FOR-CLAUDE-CODE-TEAM.md](docs/FOR-CLAUDE-CODE-TEAM.md) for three findings and recommendations.

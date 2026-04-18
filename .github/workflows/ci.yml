@@ -94,6 +94,34 @@ jobs:
           grep -q "ENABLE_PROMPT_CACHING_1H" .claude/settings.json || { echo "FAIL: settings.json missing ENABLE_PROMPT_CACHING_1H"; cat .claude/settings.json; exit 1; }
           grep -q "allowedTools" .claude/settings.json || { echo "FAIL: settings.json missing allowedTools"; cat .claude/settings.json; exit 1; }
           test -f .claude/commands/cheap.md || { echo "FAIL: cheap.md missing"; exit 1; }
+          test -f .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py missing"; exit 1; }
+          test -f .claude/hooks/loop_guard.py || { echo "FAIL: loop_guard.py missing"; exit 1; }
+          test -f .claude/hooks/session_profile.py || { echo "FAIL: session_profile.py missing"; exit 1; }
+          test -x .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py not executable"; exit 1; }
+          grep -q "dedup_guard.py" .claude/settings.local.json || { echo "FAIL: dedup_guard not wired"; cat .claude/settings.local.json; exit 1; }
+          grep -q "loop_guard.py" .claude/settings.local.json || { echo "FAIL: loop_guard not wired"; exit 1; }
+          grep -q "session_profile.py" .claude/settings.local.json || { echo "FAIL: session_profile not wired"; exit 1; }
+          # dedup_guard: first call exits 0, second identical call exits 2
+          echo '{"session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/tmp/ci.txt"}}' | python3 .claude/hooks/dedup_guard.py
+          set +e
+          echo '{"session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/tmp/ci.txt"}}' | python3 .claude/hooks/dedup_guard.py
+          rc=$?
+          set -e
+          test "$rc" = "2" || { echo "FAIL: dedup_guard should exit 2 on duplicate, got $rc"; exit 1; }
+          # loop_guard: 8th edit on same file exits 2
+          for i in 1 2 3 4 5 6 7; do
+            echo '{"session_id":"ci-loop","tool_name":"Edit","tool_input":{"file_path":"/tmp/ci-loop.py"}}' | python3 .claude/hooks/loop_guard.py
+          done
+          set +e
+          echo '{"session_id":"ci-loop","tool_name":"Edit","tool_input":{"file_path":"/tmp/ci-loop.py"}}' | python3 .claude/hooks/loop_guard.py
+          rc=$?
+          set -e
+          test "$rc" = "2" || { echo "FAIL: loop_guard should exit 2 on 8th edit, got $rc"; exit 1; }
+          # session_profile: parses transcript, writes report
+          printf '%s\n' '{"message":{"usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/tmp/x.py"}}]}}' > /tmp/ci-transcript.jsonl
+          echo '{"session_id":"ci","transcript_path":"/tmp/ci-transcript.jsonl","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/session_profile.py
+          test -d .context-os/session-reports || { echo "FAIL: session-reports dir not created"; exit 1; }
+          ls .context-os/session-reports/*.md >/dev/null || { echo "FAIL: no session report written"; exit 1; }
           # statusLine script should produce output when piped JSON
           echo '{"model":{"display_name":"test"},"workspace":{"current_dir":"/tmp/cos-install"}}' | bash .claude/statusline.sh > /tmp/sl.out
           test -s /tmp/sl.out || { echo "FAIL: statusline.sh produced no output"; exit 1; }
@@ -134,3 +162,6 @@ jobs:
           test ! -f .claude/settings.json
           test ! -f .claude/output-styles/terse.md
           test ! -f .claude/statusline.sh
+          test ! -f .claude/hooks/dedup_guard.py
+          test ! -f .claude/hooks/loop_guard.py
+          test ! -f .claude/hooks/session_profile.py

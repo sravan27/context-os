@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="2.0.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -262,10 +262,15 @@ if [ "${1:-}" = "--status" ]; then
   else
     check fail "statusLine" "not installed"
   fi
-  if [ -f .claude/settings.local.json ] && grep -q 'hooks' .claude/settings.local.json 2>/dev/null; then
-    check ok "hooks" "active (output compression)"
+  if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/session_profile.py ]; then
+    check ok "python hooks" "dedup + loop-guard + profiler installed"
   else
-    check fail "hooks" "not active (optional)"
+    check fail "python hooks" "not installed"
+  fi
+  if [ -f .claude/settings.local.json ] && grep -q 'context-os hook' .claude/settings.local.json 2>/dev/null; then
+    check ok "binary hooks" "active (output compression + memory)"
+  else
+    check fail "binary hooks" "not active (optional — needs binary)"
   fi
   echo ""
   echo "  $OK active, $WARN inactive"
@@ -342,9 +347,13 @@ except: pass
   done
   [ -f .claude/output-styles/terse.md ] && rm .claude/output-styles/terse.md && echo "  removed /.claude/output-styles/terse.md"
   [ -f .claude/statusline.sh ] && rm .claude/statusline.sh && echo "  removed /.claude/statusline.sh"
+  for h in dedup_guard.py loop_guard.py session_profile.py; do
+    [ -f ".claude/hooks/$h" ] && rm ".claude/hooks/$h" && echo "  removed .claude/hooks/$h"
+  done
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
+  [ -d "$HOME/.context-os/state" ] && rm -rf "$HOME/.context-os/state" && echo "  removed ~/.context-os/state/"
   # Clean up empty .claude subdirs
-  for d in .claude/commands .claude/agents .claude/output-styles; do
+  for d in .claude/commands .claude/agents .claude/output-styles .claude/hooks; do
     [ -d "$d" ] && [ -z "$(ls -A "$d" 2>/dev/null)" ] && rmdir "$d"
   done
   [ -d .claude ] && [ -z "$(ls -A .claude 2>/dev/null)" ] && rmdir .claude
@@ -497,7 +506,7 @@ fi
 # STEP 1: CLAUDE.md — Response shaping (saves 40-65% output tokens)
 # ============================================================================
 STEP=1
-TOTAL=10
+TOTAL=11
 MARKER_START="<!-- context-os:start -->"
 MARKER_END="<!-- context-os:end -->"
 
@@ -532,6 +541,12 @@ $REPOMAP
 If a restart packet or \`.context-os/handoff.md\` exists, read it first.
 Resume from there. Don't re-attempt failed approaches.
 Use \`/compact\` before context fills up to save state.
+
+# Token guards (hooks — .claude/hooks/)
+
+- \`dedup_guard.py\`: blocks duplicate Read/Glob/Grep within 10min. On \"[context-os] Skipping duplicate\", use the previous result from history, don't re-Read.
+- \`loop_guard.py\`: warns at edit #5 / blocks at edit #8 on same file. If warned, step back and re-read the full file or run tests to see real errors before another edit.
+- \`session_profile.py\`: Stop-time report at \`.context-os/session-reports/\`. Check it after long sessions to see where tokens went.
 $MARKER_END"
 
 if [ -f CLAUDE.md ]; then
@@ -923,9 +938,409 @@ else
 fi
 
 # ============================================================================
-# STEP 9: Hooks — output compression + session memory (needs binary)
+# STEP 9: Python hooks — dedup-guard, loop-guard, session-profile (zero-dep)
 # ============================================================================
+# These hooks are pure Python stdlib, no binary required. They catch the
+# three most common waste patterns in Claude Code sessions:
+#   - dedup_guard: blocks duplicate Read/Glob/Grep (same args within 10min)
+#   - loop_guard: warns at 5 edits / blocks at 8 edits on same file
+#   - session_profile: writes a per-session token breakdown on Stop
+# All three fail-open — any error or unexpected input exits 0 silently.
 STEP=9
+HOOK_DIR=".claude/hooks"
+mkdir -p "$HOOK_DIR"
+
+# --- dedup_guard.py -------------------------------------------------
+cat > "$HOOK_DIR/dedup_guard.py" <<'CONTEXT_OS_DEDUP_EOF'
+#!/usr/bin/env python3
+"""PreToolUse hook: blocks duplicate Read/Glob/Grep within a session."""
+import hashlib, json, os, sys, time
+from pathlib import Path
+
+TTL_SECONDS = 600
+SESSION_MAX_AGE_SECONDS = 86400
+STATE_DIR = Path.home() / ".context-os" / "state"
+
+def args_hash(tool_name, tool_input):
+    if tool_name == "Read":
+        key = tool_input.get("file_path", "")
+        offset = tool_input.get("offset")
+        limit = tool_input.get("limit")
+        if offset is not None or limit is not None:
+            key += f"#{offset or 0}:{limit or 0}"
+    elif tool_name == "Glob":
+        key = tool_input.get("pattern", "") + "|" + tool_input.get("path", "")
+    elif tool_name == "Grep":
+        parts = [tool_input.get("pattern", ""), tool_input.get("path", ""),
+                 tool_input.get("glob", ""), tool_input.get("type", ""),
+                 str(tool_input.get("output_mode", "")),
+                 str(tool_input.get("-i", False)),
+                 str(tool_input.get("multiline", False))]
+        key = "|".join(parts)
+    else:
+        key = json.dumps(tool_input, sort_keys=True)
+    return hashlib.sha1(f"{tool_name}:{key}".encode()).hexdigest()[:16]
+
+def prune_old(state_dir, now):
+    try:
+        for f in state_dir.glob("dedup-*.json"):
+            try:
+                if now - f.stat().st_mtime > SESSION_MAX_AGE_SECONDS:
+                    f.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+def main():
+    if os.environ.get("CONTEXT_OS_DEDUP") == "0":
+        return 0
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    tool_name = payload.get("tool_name", "")
+    if tool_name not in ("Read", "Glob", "Grep"):
+        return 0
+    tool_input = payload.get("tool_input") or {}
+    session_id = payload.get("session_id", "default")
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    state_file = STATE_DIR / f"dedup-{session_id}.json"
+    now = time.time()
+    if now % 10 < 1:
+        prune_old(STATE_DIR, now)
+    try:
+        state = json.loads(state_file.read_text()) if state_file.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    state = {k: v for k, v in state.items() if now - v.get("t", 0) < TTL_SECONDS}
+    h = args_hash(tool_name, tool_input)
+    if h in state:
+        prev = state[h]
+        age = int(now - prev["t"])
+        state[h]["t"] = now
+        try:
+            state_file.write_text(json.dumps(state))
+        except OSError:
+            pass
+        print(f"[context-os] Skipping duplicate {tool_name}: "
+              f"same args {age}s ago. Use previous result from history.",
+              file=sys.stderr)
+        return 2
+    state[h] = {"t": now, "n": tool_name}
+    try:
+        state_file.write_text(json.dumps(state))
+    except OSError:
+        pass
+    return 0
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_DEDUP_EOF
+chmod +x "$HOOK_DIR/dedup_guard.py"
+
+# --- loop_guard.py --------------------------------------------------
+cat > "$HOOK_DIR/loop_guard.py" <<'CONTEXT_OS_LOOP_EOF'
+#!/usr/bin/env python3
+"""PreToolUse hook: detects Read/Edit loops and nudges Claude to step back."""
+import json, os, sys, time
+from pathlib import Path
+
+WARN = int(os.environ.get("CONTEXT_OS_LOOP_WARN", "5"))
+HARD = int(os.environ.get("CONTEXT_OS_LOOP_HARD", "8"))
+WINDOW = 1800
+STATE_DIR = Path.home() / ".context-os" / "state"
+
+def main():
+    if os.environ.get("CONTEXT_OS_LOOP_GUARD") == "0":
+        return 0
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    tool_name = payload.get("tool_name", "")
+    if tool_name not in ("Edit", "Write", "NotebookEdit"):
+        return 0
+    tool_input = payload.get("tool_input") or {}
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    if not file_path:
+        return 0
+    session_id = payload.get("session_id", "default")
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    state_file = STATE_DIR / f"loop-{session_id}.json"
+    now = time.time()
+    try:
+        state = json.loads(state_file.read_text()) if state_file.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    entry = state.get(file_path, {"count": 0, "first": now, "last": now})
+    if now - entry.get("last", now) > WINDOW:
+        entry = {"count": 0, "first": now, "last": now}
+    entry["count"] += 1
+    entry["last"] = now
+    state[file_path] = entry
+    try:
+        state_file.write_text(json.dumps(state))
+    except OSError:
+        pass
+    count = entry["count"]
+    short = os.path.relpath(file_path) if os.path.isabs(file_path) else file_path
+    if count >= HARD:
+        print(f"[context-os] STOP — edited {short} {count} times. "
+              f"Almost certainly a loop. Ask the user before another edit. "
+              f"Try: re-reading the full file, running tests for real errors, "
+              f"or a different approach.", file=sys.stderr)
+        return 2
+    if count == WARN:
+        print(f"[context-os] Heads up: edit #{count} on {short}. "
+              f"If tests still fail, step back and re-read before editing again.",
+              file=sys.stderr)
+    return 0
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_LOOP_EOF
+chmod +x "$HOOK_DIR/loop_guard.py"
+
+# --- session_profile.py ---------------------------------------------
+cat > "$HOOK_DIR/session_profile.py" <<'CONTEXT_OS_PROFILE_EOF'
+#!/usr/bin/env python3
+"""Stop hook: writes a per-session token-usage report to .context-os/session-reports/."""
+import json, os, sys, time
+from collections import Counter, defaultdict
+from pathlib import Path
+
+REPORTS = ".context-os/session-reports"
+BIG_TOKENS = 5000
+CHARS_PER_TOKEN = 4
+
+def approx(s):
+    return max(1, len(s) // CHARS_PER_TOKEN)
+
+def parse(path):
+    s = {"turns": 0, "input": 0, "output": 0, "cr": 0, "cw": 0,
+         "tools": Counter(), "hashes": defaultdict(list),
+         "edits": Counter(), "big": [], "top": []}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return s
+    for i, line in enumerate(lines):
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = evt.get("message") or {}
+        u = msg.get("usage") or evt.get("usage") or {}
+        if u:
+            s["turns"] += 1
+            s["input"] += u.get("input_tokens", 0) or 0
+            s["output"] += u.get("output_tokens", 0) or 0
+            s["cr"] += u.get("cache_read_input_tokens", 0) or 0
+            s["cw"] += u.get("cache_creation_input_tokens", 0) or 0
+            tot = (u.get("input_tokens", 0) or 0) + (u.get("output_tokens", 0) or 0)
+            if tot > 0:
+                s["top"].append((i, tot, _summ(msg)))
+        content = msg.get("content") or []
+        if isinstance(content, list):
+            for b in content:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "tool_use":
+                    tool = b.get("name", "?")
+                    s["tools"][tool] += 1
+                    inp = b.get("input") or {}
+                    if tool in ("Read", "Glob", "Grep"):
+                        s["hashes"][(tool, _sig(tool, inp))].append(i)
+                    if tool in ("Edit", "Write", "NotebookEdit"):
+                        fp = inp.get("file_path") or inp.get("notebook_path") or ""
+                        if fp:
+                            s["edits"][fp] += 1
+                elif b.get("type") == "tool_result":
+                    rc = b.get("content")
+                    txt = rc if isinstance(rc, str) else json.dumps(rc)[:20000]
+                    t = approx(txt)
+                    if t >= BIG_TOKENS:
+                        s["big"].append((i, t, (txt or "")[:120].replace("\n", " ")))
+    return s
+
+def _sig(tool, inp):
+    if tool == "Read":
+        return inp.get("file_path", "")
+    if tool == "Glob":
+        return f"{inp.get('pattern', '')}|{inp.get('path', '')}"
+    if tool == "Grep":
+        return "|".join(str(inp.get(k, "")) for k in ("pattern", "path", "glob", "type", "output_mode"))
+    return json.dumps(inp, sort_keys=True)[:200]
+
+def _summ(msg):
+    c = msg.get("content") or []
+    if isinstance(c, list):
+        for b in c:
+            if isinstance(b, dict):
+                if b.get("type") == "text":
+                    return (b.get("text") or "")[:80].replace("\n", " ")
+                if b.get("type") == "tool_use":
+                    return f"tool:{b.get('name', '?')}"
+    if isinstance(c, str):
+        return c[:80].replace("\n", " ")
+    return ""
+
+def report(s, sid):
+    tot = s["input"] + s["output"] + s["cw"]
+    cr = s["cr"] / max(1, s["input"] + s["cr"])
+    out = [f"# Session profile — {sid}", "",
+           f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}", "",
+           "## Totals", "",
+           f"- Turns: {s['turns']}",
+           f"- Input tokens (uncached): {s['input']:,}",
+           f"- Output tokens: {s['output']:,}",
+           f"- Cache read: {s['cr']:,}",
+           f"- Cache write: {s['cw']:,}",
+           f"- **Total billable: {tot:,}**",
+           f"- Cache hit ratio: {cr:.1%}", "",
+           "## Tool call breakdown", ""]
+    for tool, n in s["tools"].most_common():
+        out.append(f"- {tool}: {n}")
+    if not s["tools"]:
+        out.append("- (no tool calls)")
+    out.append("")
+    dupes = [(t, sig, ts) for (t, sig), ts in s["hashes"].items() if len(ts) > 1]
+    out += ["## Duplicate Read/Glob/Grep (dedup_guard saves these)", ""]
+    if dupes:
+        dupes.sort(key=lambda x: -len(x[2]))
+        for t, sig, ts in dupes[:10]:
+            out.append(f"- `{t}` x {len(ts)}: `{sig[:80]}`")
+    else:
+        out.append("- (none)")
+    out.append("")
+    loops = [(fp, n) for fp, n in s["edits"].most_common() if n >= 3]
+    out += ["## Files edited 3+ times (loop_guard territory)", ""]
+    if loops:
+        for fp, n in loops[:10]:
+            out.append(f"- {fp}: {n} edits")
+    else:
+        out.append("- (none)")
+    out.append("")
+    out += ["## Oversized tool results (>5K tokens each)", ""]
+    if s["big"]:
+        for turn, t, p in sorted(s["big"], key=lambda x: -x[1])[:10]:
+            out.append(f"- turn {turn}: ~{t:,} tok - `{p}`")
+    else:
+        out.append("- (none)")
+    out.append("")
+    out += ["## Top 10 turns by token cost", ""]
+    for turn, t, summ in sorted(s["top"], key=lambda x: -x[1])[:10]:
+        out.append(f"- turn {turn}: {t:,} tok - {summ or '(empty)'}")
+    out.append("")
+    out += ["## Recommendations", ""]
+    recs = []
+    if dupes:
+        saved = sum(len(ts) - 1 for _, _, ts in dupes)
+        recs.append(f"- dedup_guard would have skipped ~{saved} duplicate tool calls.")
+    if loops:
+        recs.append("- loop_guard catches edit loops before they burn tokens.")
+    if s["big"]:
+        recs.append("- Consider adding noise patterns to .claudeignore.")
+    if cr < 0.3 and tot > 50000:
+        recs.append("- Low cache hit ratio. Check ENABLE_PROMPT_CACHING_1H=1 and stable CLAUDE.md.")
+    if not recs:
+        recs.append("- Session looks clean. No obvious waste.")
+    out += recs
+    out.append("")
+    return "\n".join(out)
+
+def main():
+    if os.environ.get("CONTEXT_OS_PROFILE") == "0":
+        return 0
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    transcript = payload.get("transcript_path")
+    sid = payload.get("session_id", "unknown")
+    cwd = payload.get("cwd") or os.getcwd()
+    if not transcript or not os.path.exists(transcript):
+        return 0
+    s = parse(Path(transcript))
+    if s["turns"] == 0:
+        return 0
+    rd = Path(cwd) / REPORTS
+    rd.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    out = rd / f"{ts}-{sid[:8]}.md"
+    try:
+        out.write_text(report(s, sid))
+    except OSError:
+        return 0
+    tot = s["input"] + s["output"] + s["cw"]
+    dupes = sum(1 for v in s["hashes"].values() if len(v) > 1)
+    print(f"[context-os] Session: {tot:,} tok, {s['turns']} turns, "
+          f"{dupes} duplicate tool calls. Report: {out}", file=sys.stderr)
+    return 0
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_PROFILE_EOF
+chmod +x "$HOOK_DIR/session_profile.py"
+
+# Merge Python hooks into settings.local.json. Additive merge — preserves any
+# existing hooks (e.g. from the optional binary-based step below).
+PY_ABS="$(cd "$HOOK_DIR" && pwd)"
+SETTINGS_LOCAL=".claude/settings.local.json"
+
+PYTHON_HOOKS=$(cat <<HOOKJSON
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Read|Glob|Grep", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/dedup_guard.py'", "timeout": 3}]},
+      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/loop_guard.py'", "timeout": 3}]}
+    ],
+    "Stop": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/session_profile.py'", "timeout": 15}]}
+    ]
+  }
+}
+HOOKJSON
+)
+
+if [ -f "$SETTINGS_LOCAL" ]; then
+  printf '%s' "$PYTHON_HOOKS" | python3 -c "
+import json, sys
+existing = json.load(open('$SETTINGS_LOCAL'))
+new_hooks = json.load(sys.stdin)['hooks']
+existing.setdefault('hooks', {})
+for event, entries in new_hooks.items():
+    existing['hooks'].setdefault(event, [])
+    # Dedupe on (matcher, command) so re-runs are idempotent.
+    seen = {(e.get('matcher',''), tuple(h.get('command','') for h in e.get('hooks',[])))
+            for e in existing['hooks'][event]}
+    for entry in entries:
+        sig = (entry.get('matcher',''), tuple(h.get('command','') for h in entry.get('hooks',[])))
+        if sig not in seen:
+            existing['hooks'][event].append(entry)
+            seen.add(sig)
+json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
+" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 3 Python hooks (dedup, loop-guard, profiler)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
+else
+  printf '%s' "$PYTHON_HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$PYTHON_HOOKS" > "$SETTINGS_LOCAL"
+  echo "  [$STEP/$TOTAL] installed 3 Python hooks (dedup, loop-guard, profiler)"
+fi
+
+# ============================================================================
+# STEP 10: Binary hooks — output compression + session memory (needs binary)
+# ============================================================================
+STEP=10
 BIN=""
 if command -v context-os &>/dev/null; then
   BIN="context-os"
@@ -971,13 +1386,22 @@ HOOKEOF
     printf '%s' "$HOOKS" | python3 -c "
 import json, sys
 existing = json.load(open('$SETTINGS_LOCAL'))
-new_hooks = json.load(sys.stdin)
-existing['hooks'] = new_hooks['hooks']
+new_hooks = json.load(sys.stdin)['hooks']
+existing.setdefault('hooks', {})
+for event, entries in new_hooks.items():
+    existing['hooks'].setdefault(event, [])
+    seen = {(e.get('matcher',''), tuple(h.get('command','') for h in e.get('hooks',[])))
+            for e in existing['hooks'][event]}
+    for entry in entries:
+        sig = (entry.get('matcher',''), tuple(h.get('command','') for h in entry.get('hooks',[])))
+        if sig not in seen:
+            existing['hooks'][event].append(entry)
+            seen.add(sig)
 json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
-" 2>/dev/null && echo "  [$STEP/$TOTAL] updated hooks in settings.local.json" || echo "  [$STEP/$TOTAL] hooks merge failed"
+" 2>/dev/null && echo "  [$STEP/$TOTAL] merged 5 binary hooks into settings.local.json" || echo "  [$STEP/$TOTAL] binary hooks merge failed"
   else
     printf '%s' "$HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$HOOKS" > "$SETTINGS_LOCAL"
-    echo "  [$STEP/$TOTAL] installed 5 hooks (output compression + memory)"
+    echo "  [$STEP/$TOTAL] installed 5 binary hooks (output compression + memory)"
   fi
 
   mkdir -p .context-os
@@ -988,9 +1412,9 @@ else
 fi
 
 # ============================================================================
-# STEP 10: .gitignore
+# STEP 11: .gitignore
 # ============================================================================
-STEP=10
+STEP=11
 if [ -f .gitignore ]; then
   if ! grep -q '.context-os' .gitignore 2>/dev/null; then
     printf '\n# Context OS local state\n.context-os/\n.claude/settings.local.json\n' >> .gitignore
@@ -1036,6 +1460,9 @@ printf "  ✓ %-22s %s\n" "allowed tools" "15 pre-approved (zero confirmation pr
 printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship /cheap"
 printf "  ✓ %-22s %s\n" "haiku subagent" "/explorer for cheap exploration"
 printf "  ✓ %-22s %s\n" "secret filtering" ".env, *.pem, credentials blocked"
+printf "  ✓ %-22s %s\n" "dedup guard" "blocks duplicate Read/Glob/Grep within 10min"
+printf "  ✓ %-22s %s\n" "loop guard" "warns at 5 edits, blocks at 8 on same file"
+printf "  ✓ %-22s %s\n" "session profiler" "per-session token report → .context-os/session-reports/"
 
 if [ -n "$BIN" ]; then
   printf "  ✓ %-22s %s\n" "output compression" "27-70% on test/build output"
