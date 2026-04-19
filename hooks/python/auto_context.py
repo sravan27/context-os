@@ -167,6 +167,26 @@ def rank(prompt, graph, max_hits, min_word):
             c["score"] += 2
             c["reasons"].append(f"hot ({hot[c['file']]} touches/90d)")
 
+    # 5. Test-file penalty — unless the prompt is explicitly about testing,
+    # a test file is usually a less-relevant neighbor than the source it
+    # exercises. Reduces false positives like `tests/test_foo.py` beating
+    # `src/foo.py` on name-path matches.
+    prompt_low = prompt.lower()
+    mentions_tests = any(
+        w in prompt_low for w in ("test", "tests", "pytest", "fixture")
+    )
+    if not mentions_tests:
+        for key, c in candidates.items():
+            f = c["file"]
+            base = os.path.basename(f).lower()
+            if (f.startswith("tests/") or f.startswith("test/")
+                    or "/tests/" in f or "/test/" in f
+                    or base.startswith("test_") or base.endswith("_test.py")
+                    or base.endswith(".test.ts") or base.endswith(".test.js")
+                    or base.endswith(".spec.ts") or base.endswith(".spec.js")):
+                c["score"] -= 3
+                c["reasons"].append("test-file penalty")
+
     ranked = sorted(candidates.values(),
                     key=lambda c: (-c["score"], c["file"], c["line"]))
     # Dedupe: keep at most 2 hits per file

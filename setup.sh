@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.2.0"
+VERSION="2.3.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -345,7 +345,7 @@ try:
 except: pass
 " 2>/dev/null && echo "  removed allowedTools from settings.json"
   fi
-  for cmd in compact context ship cheap find deps hot warm-clear relevant insights; do
+  for cmd in compact context ship cheap find deps hot warm-clear relevant insights rebuild-graph; do
     [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
   done
   for agent in explorer; do
@@ -1147,7 +1147,20 @@ description: Aggregate recent session reports — top token sinks and redundant 
 Under 20 lines total. Concrete suggestions only — no narrative.
 CMDEOF
 
-echo "  [$STEP/$TOTAL] installed 10 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights)"
+cat > .claude/commands/rebuild-graph.md << 'CMDEOF'
+---
+description: Rebuild the repo graph used by auto_context / /find / /deps / /hot
+---
+Run `python3 .context-os/build_repo_graph.py .` from the repo root via Bash. Then:
+
+1. Print the one-line summary the builder emits (file count, symbol count, hot files).
+2. Confirm the graph path: `.context-os/repo-graph.json`.
+3. Mention: auto_context and `/find` / `/deps` / `/hot` now use the fresh index.
+
+If the builder fails, show its stderr and tell the user to check Python 3 is on PATH.
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 11 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights /rebuild-graph)"
 
 # ============================================================================
 # STEP 7: Haiku subagent — 15x cheaper than Opus for exploration
@@ -1851,6 +1864,20 @@ def rank(prompt, graph, max_hits, min_word):
         if c["file"] in hot:
             c["score"] += 2
 
+    # Test-file penalty unless prompt explicitly mentions testing.
+    prompt_low = prompt.lower()
+    mentions_tests = any(w in prompt_low for w in ("test","tests","pytest","fixture"))
+    if not mentions_tests:
+        for c in candidates.values():
+            f = c["file"]
+            base = os.path.basename(f).lower()
+            if (f.startswith("tests/") or f.startswith("test/")
+                    or "/tests/" in f or "/test/" in f
+                    or base.startswith("test_") or base.endswith("_test.py")
+                    or base.endswith(".test.ts") or base.endswith(".test.js")
+                    or base.endswith(".spec.ts") or base.endswith(".spec.js")):
+                c["score"] -= 3
+
     ranked = sorted(candidates.values(),
                     key=lambda c: (-c["score"], c["file"], c["line"]))
     per_file = {}
@@ -1939,18 +1966,30 @@ prewarm.py - Context OS SessionStart hook.
 Emits a compact "session intelligence brief" on session start:
   1. Handoff packet reminder (if .context-os/handoff.md exists)
   2. Git state: branch, uncommitted, ahead/behind main
-  3. Top-3 hot files (90d) from the repo graph
-  4. Last session's notable issues (from .context-os/session-reports/)
+  3. Graph freshness: auto-rebuild in background if stale
+  4. Top-3 hot files (90d) from the repo graph
+  5. Last session's notable issues (from .context-os/session-reports/)
 
 Prepended to session context by Claude Code so Turn 1 starts informed.
 
-Env: CONTEXT_OS_PREWARM=0 to disable. Fail-open on any error.
+Env:
+  CONTEXT_OS_PREWARM=0             disable entirely
+  CONTEXT_OS_GRAPH_AUTOBUILD=0     disable background graph rebuild
+  CONTEXT_OS_GRAPH_MAX_AGE_DAYS=7  rebuild if graph older than N days
+  CONTEXT_OS_GRAPH_MAX_CHANGED=20  rebuild if > N source files newer
 """
 import glob
 import json
 import os
 import subprocess
 import sys
+import time
+
+SRC_EXTS = (".py",".js",".mjs",".cjs",".jsx",".ts",".tsx",".rs",".go")
+EXCLUDE_DIRS = {"node_modules","target","dist","build",".next",".git",
+                ".venv","venv","__pycache__",".pytest_cache","coverage",
+                ".turbo",".cache",".mypy_cache",".ruff_cache",".tox",
+                "bower_components","vendor",".idea",".vscode",".context-os"}
 
 
 def git(cmd, cwd):
@@ -1992,6 +2031,72 @@ def graph_hot(cwd, n=3):
     except Exception:
         return []
     return (g.get("hot_files") or [])[:n]
+
+
+def graph_freshness(cwd, cap=800):
+    p = os.path.join(cwd, ".context-os", "repo-graph.json")
+    if not os.path.isfile(p):
+        return None
+    try:
+        gmt = os.path.getmtime(p)
+    except OSError:
+        return None
+    age = (time.time() - gmt) / 86400
+    newer = 0
+    seen = 0
+    for root, dirs, files in os.walk(cwd):
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        for fn in files:
+            if not fn.endswith(SRC_EXTS):
+                continue
+            seen += 1
+            if seen > cap:
+                break
+            try:
+                if os.path.getmtime(os.path.join(root, fn)) > gmt:
+                    newer += 1
+            except OSError:
+                pass
+        if seen > cap:
+            break
+    return {"age_days": age, "changed": newer, "seen": seen}
+
+
+def is_stale(fresh, max_age, max_changed):
+    if fresh is None:
+        return False, None
+    if fresh["age_days"] > max_age:
+        return True, "graph %.0fd old" % fresh["age_days"]
+    if fresh["changed"] > max_changed:
+        return True, "%d source files newer than graph" % fresh["changed"]
+    return False, None
+
+
+def find_builder(cwd):
+    candidates = [
+        os.path.join(cwd, ".context-os", "build_repo_graph.py"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "build_repo_graph.py"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def spawn_rebuild(cwd):
+    builder = find_builder(cwd)
+    if not builder:
+        return False
+    try:
+        subprocess.Popen([sys.executable, builder, cwd], cwd=cwd,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+        return True
+    except Exception:
+        return False
 
 
 def last_session_notes(cwd):
@@ -2045,6 +2150,20 @@ def main():
         if g["base"] and g["behind"]:
             parts.append(str(g["behind"])+" behind `"+g["base"]+"`")
         sections.append("Git: " + ", ".join(parts) + ".")
+
+    try:
+        max_age = int(os.environ.get("CONTEXT_OS_GRAPH_MAX_AGE_DAYS","7"))
+        max_changed = int(os.environ.get("CONTEXT_OS_GRAPH_MAX_CHANGED","20"))
+    except ValueError:
+        max_age, max_changed = 7, 20
+    fresh = graph_freshness(cwd)
+    stale, reason = is_stale(fresh, max_age, max_changed)
+    if stale:
+        auto = os.environ.get("CONTEXT_OS_GRAPH_AUTOBUILD") != "0"
+        if auto and spawn_rebuild(cwd):
+            sections.append("Graph: " + reason + " \u2014 rebuilding in background. Auto-context will use the fresh graph next session.")
+        else:
+            sections.append("Graph: " + reason + " \u2014 run `/rebuild-graph` to refresh.")
 
     hot = graph_hot(cwd)
     if hot:
@@ -2240,7 +2359,7 @@ printf "  ✓ %-22s %s\n" "prompt caching 1h" "5min→1hr TTL (huge on long sess
 printf "  ✓ %-22s %s\n" "traffic control" "non-essential API calls disabled"
 printf "  ✓ %-22s %s\n" "context cap" "150K max (prevents runaway sessions)"
 printf "  ✓ %-22s %s\n" "allowed tools" "15 pre-approved (zero confirmation prompts)"
-printf "  ✓ %-22s %s\n" "slash commands" "10 total (incl. /find /deps /hot /relevant /insights)"
+printf "  ✓ %-22s %s\n" "slash commands" "11 total (incl. /find /deps /hot /relevant /insights /rebuild-graph)"
 printf "  ✓ %-22s %s\n" "haiku subagent" "/explorer for cheap exploration"
 printf "  ✓ %-22s %s\n" "secret filtering" ".env, *.pem, credentials blocked"
 printf "  ✓ %-22s %s\n" "repo graph" "symbols + imports + hot files (.context-os/repo-graph.json)"

@@ -39,6 +39,21 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 python/evals/runners/safe_mode_runner.py
 
+      - name: auto_context precision/recall eval
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/autocontext_eval.py
+          # Publish the report as an artifact for historical tracking
+          test -f python/evals/reports/autocontext-eval.md
+
+      - name: Upload autocontext eval report
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: autocontext-eval-report
+          path: python/evals/reports/autocontext-eval.md
+          retention-days: 30
+
   setup-sh:
     name: setup.sh (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -100,6 +115,7 @@ jobs:
           test -f .claude/commands/warm-clear.md || { echo "FAIL: warm-clear.md missing"; exit 1; }
           test -f .claude/commands/relevant.md || { echo "FAIL: relevant.md missing"; exit 1; }
           test -f .claude/commands/insights.md || { echo "FAIL: insights.md missing"; exit 1; }
+          test -f .claude/commands/rebuild-graph.md || { echo "FAIL: rebuild-graph.md missing"; exit 1; }
           test -f .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py missing"; exit 1; }
           test -f .claude/hooks/loop_guard.py || { echo "FAIL: loop_guard.py missing"; exit 1; }
           test -f .claude/hooks/file_size_guard.py || { echo "FAIL: file_size_guard.py missing"; exit 1; }
@@ -177,6 +193,14 @@ jobs:
           # prewarm: disabled via env
           pre_disabled=$(echo '{"cwd":"'"$(pwd)"'"}' | CONTEXT_OS_PREWARM=0 python3 .claude/hooks/prewarm.py)
           test -z "$pre_disabled" || { echo "FAIL: prewarm should be silent when disabled, got: $pre_disabled"; exit 1; }
+          # prewarm: stale graph triggers /rebuild-graph hint when autobuild=0
+          touch -t 202301010000 .context-os/repo-graph.json
+          stale_out=$(echo '{"cwd":"'"$(pwd)"'"}' | CONTEXT_OS_GRAPH_AUTOBUILD=0 python3 .claude/hooks/prewarm.py)
+          echo "$stale_out" | grep -q "rebuild-graph" || { echo "FAIL: stale graph should suggest /rebuild-graph. output: $stale_out"; exit 1; }
+          # prewarm: stale graph triggers background rebuild when autobuild on
+          touch -t 202301010000 .context-os/repo-graph.json
+          auto_out=$(echo '{"cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/prewarm.py)
+          echo "$auto_out" | grep -q "rebuilding in background" || { echo "FAIL: stale graph with autobuild on should rebuild. output: $auto_out"; exit 1; }
           # repo-graph.json structure: has symbol_index and files keys
           python3 -c "
           import json, sys
@@ -239,3 +263,4 @@ jobs:
           test ! -f .claude/commands/warm-clear.md
           test ! -f .claude/commands/relevant.md
           test ! -f .claude/commands/insights.md
+          test ! -f .claude/commands/rebuild-graph.md

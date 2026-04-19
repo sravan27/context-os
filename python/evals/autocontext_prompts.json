@@ -1,0 +1,117 @@
+{
+  "description": "Hand-labeled prompts for evaluating auto_context.py precision/recall. Each prompt maps to the top-3 files a competent engineer would open first to work on that task. expected_files is ordered by relevance — the most-likely-first-open is index 0.",
+  "fixture_root": "python/evals/autocontext_fixture",
+  "prompts": [
+    {
+      "id": "login-rate-limit",
+      "prompt": "add rate limiting to the login endpoint so users can't brute force passwords",
+      "expected_files": [
+        "src/api/rate_limit.py",
+        "src/auth/login.py",
+        "src/api/router.py"
+      ],
+      "notes": "rate_limit_decorator already wraps handle_login in router.py; user wants tighter limit on /login"
+    },
+    {
+      "id": "hash-password-lookup",
+      "prompt": "where is hash_password defined and which files call it",
+      "expected_files": [
+        "src/utils/crypto.py",
+        "src/auth/login.py"
+      ],
+      "notes": "hash_password lives in crypto.py; login.py uses verify_password from same module"
+    },
+    {
+      "id": "session-ttl-config",
+      "prompt": "make the session TTL configurable per environment via the Settings class",
+      "expected_files": [
+        "src/config/settings.py",
+        "src/auth/session.py"
+      ],
+      "notes": "Settings.session_ttl lives in settings.py; create_session reads it"
+    },
+    {
+      "id": "queries-async",
+      "prompt": "refactor find_user_by_email to use async database queries",
+      "expected_files": [
+        "src/db/queries.py",
+        "src/auth/login.py",
+        "src/config/database.py"
+      ],
+      "notes": "find_user_by_email lives in queries.py, called from login.py, uses get_db_connection"
+    },
+    {
+      "id": "middleware-logging",
+      "prompt": "auth_middleware should log the user_id not just warn on unauth",
+      "expected_files": [
+        "src/auth/middleware.py",
+        "src/utils/logging.py",
+        "src/auth/session.py"
+      ],
+      "notes": "middleware.py calls setup_logger and SessionManager.get"
+    },
+    {
+      "id": "migrations-add-column",
+      "prompt": "add a created_at column to the users table via a new migration",
+      "expected_files": [
+        "src/db/migrations.py",
+        "src/db/models.py"
+      ],
+      "notes": "MIGRATIONS list in migrations.py; User model in models.py"
+    },
+    {
+      "id": "router-new-endpoint",
+      "prompt": "register a /logout endpoint on APIRouter that invalidates the session",
+      "expected_files": [
+        "src/api/router.py",
+        "src/auth/session.py"
+      ],
+      "notes": "APIRouter.add in router.py; SessionManager.invalidate in session.py"
+    },
+    {
+      "id": "email-on-signup",
+      "prompt": "send a welcome email via EmailClient when a new user signs up",
+      "expected_files": [
+        "src/utils/email.py",
+        "src/auth/login.py"
+      ],
+      "notes": "send_email + EmailClient in email.py; signup-like flow lives near login.py"
+    },
+    {
+      "id": "db-connection-pool",
+      "prompt": "convert get_db_connection to use a connection pool and close idle conns",
+      "expected_files": [
+        "src/config/database.py",
+        "src/db/queries.py",
+        "src/db/migrations.py"
+      ],
+      "notes": "get_db_connection + close_connection in database.py; callers in queries.py + migrations.py"
+    },
+    {
+      "id": "rate-limit-config",
+      "prompt": "expose RATE_LIMIT_CONFIG through the Settings object instead of a module constant",
+      "expected_files": [
+        "src/api/rate_limit.py",
+        "src/config/settings.py"
+      ],
+      "notes": "RATE_LIMIT_CONFIG lives in rate_limit.py; Settings class in settings.py"
+    },
+    {
+      "id": "verify-password-bug",
+      "prompt": "verify_password returns True for empty string on malformed stored hash",
+      "expected_files": [
+        "src/utils/crypto.py",
+        "src/auth/login.py"
+      ],
+      "notes": "verify_password is in crypto.py; only caller is login.py validate_credentials"
+    },
+    {
+      "id": "settings-env-var",
+      "prompt": "load_config should also read from process environment if .env missing",
+      "expected_files": [
+        "src/config/settings.py"
+      ],
+      "notes": "load_config lives solely in settings.py"
+    }
+  ]
+}

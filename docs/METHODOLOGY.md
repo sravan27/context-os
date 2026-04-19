@@ -308,7 +308,32 @@ Source: `python/evals/reports/compaction-survival-report.json`, run `2026-04-10T
 
 This is **not** a token-savings benchmark. It's a correctness benchmark for the session-memory technique (row 16 in the README's techniques table). Token savings from session memory come from not re-explaining after a restart — unmeasured (§9).
 
-### 7.3 End-to-end benchmark
+### 7.3 Auto-context graph-RAG eval (added v2.3.0)
+
+Source: `python/evals/reports/autocontext-eval.md`. Runner: `python3 python/evals/runners/autocontext_eval.py`. Regenerated on every `main` CI run; artifact uploaded for 30 days.
+
+**Fixture** (`python/evals/autocontext_fixture/`): realistic mini web app — `src/auth` (login / session / middleware), `src/api` (router / rate_limit), `src/config` (settings / database), `src/db` (models / migrations / queries), `src/utils` (crypto / email / logging), plus five importer-edge test files. 13 source files, 5 test files, ~30 top-level symbols, genuine cross-file Python imports that exercise `symbol_index`, `files.imports`, and `imported_by`.
+
+**Ground truth**: 12 prompts in `python/evals/autocontext_prompts.json`, each hand-labeled with the top-3 files a competent engineer would open first for that task (e.g., "add rate limiting to the login endpoint" → `rate_limit.py`, `login.py`, `router.py`).
+
+**Protocol**: for each prompt, pipe `{"prompt": ..., "cwd": fixture}` into `hooks/python/auto_context.py`, parse the emitted `<context-os:autocontext>` block for ordered file paths (requiring `/` and a source extension, so dotted module names don't leak in), compare against `expected_files`.
+
+| Metric | Value | Definition |
+|---|---:|---|
+| Precision@3 | **0.611** | Fraction of top-3 predicted files that are in `expected_files`. |
+| Recall@3 | **0.583** | Fraction of `expected_files` present in top-3 predicted. |
+| MRR | **0.958** | Mean of `1 / rank_of_first_correct_hit`, 0 if none in top-K. |
+| Coverage | **1.000** | Fraction of prompts that emit a non-empty block. |
+
+**What MRR 0.958 means in practice**: for 11 of 12 prompts, the single highest-ranked candidate is correct. The one miss (`migrations-add-column`) ranks `tests/test_migrations.py` first and `src/db/migrations.py` second — so the correct file is still in the top-2. This is the operational signal: Claude sees "structure before retrieval" with the right file on top in the overwhelming majority of cases.
+
+**CI gate**: runner exits non-zero if P@3 < 0.60 or MRR < 0.60 (configurable via `--threshold-precision` / `--threshold-mrr`). Report re-rendered to `python/evals/reports/autocontext-eval.md` on every run.
+
+**Where it falls short**: precision@3 is pulled down by `src/db/models.py` — a "hub" file with `class Session`, `class User`, `class Token`. Case-insensitive symbol match hits it for many prompts mentioning "session" or "user", bumping it into top-3 alongside the actually-targeted source file. This is honest signal: hub files are genuinely useful neighbors even when not the primary edit target, but strict precision@3 against hand-labeled ground truth penalizes them.
+
+**Not measured**: actual token-savings from fewer exploratory Read/Glob/Grep turns in real sessions. Estimated lower bound from first principles: an exploratory Glob averages ~500 tokens of result + ~200 tokens of reasoning ≈ 700 tokens/call avoided; 2–3 avoided calls per non-trivial prompt ≈ 1.5K–2K tokens. Unquantified pending a live-session A/B with a real transcript corpus (§9).
+
+### 7.4 End-to-end benchmark
 
 Source: `python/evals/reports/benchmark-fixture-20260415.json`, run `2026-04-15` (single run, `N=1`).
 
@@ -366,18 +391,20 @@ For each technique in the README, we tag the evidence supporting its token-savin
 | 14 | Haiku subagent (explorer) | ~93% on exploration | D | Pricing arithmetic: Haiku 4.5 input $0.80/M vs Sonnet 4.6 $3.00/M ≈ 73% cheaper on input; output $4 vs $15 ≈ 73% cheaper. Isolated subagent context adds savings. Claimed 93% is an upper bound for exploration-heavy tasks. Has **not** been benchmarked in our harness. |
 | 15 | Output compression (hooks) | 27–70% on test runs | **M** | `python/evals/reports/safe-mode-report.md`. Measured 13.0–42.3% per fixture; 71% on 50-test cargo run cited in README is from a separate `cargo test` trace (pending formal reproduction — this number should not be taken as measured under our gates until a report artifact is produced). |
 | 16 | Session memory | Survives compaction | **M** | `python/evals/reports/compaction-survival-report.md`. 2/2 cases pass correctness gates. Token-savings contribution (from not re-explaining) is unmeasured. |
+| 17 | Auto-context (graph-RAG UserPromptSubmit) | Top-1 relevance ~0.96 MRR | **M** | `python/evals/reports/autocontext-eval.md`. On 12 hand-labeled prompts against a realistic 13-file fixture: **P@3 = 0.611, R@3 = 0.583, MRR = 0.958, coverage = 1.00**. The first candidate is correct on 11/12 prompts. Token-savings contribution from avoided exploratory Read/Glob/Grep turns is not yet isolated; MRR is the tractable proxy and is gated in CI (`--threshold-mrr 0.60`). |
+| 18 | Prewarm (SessionStart brief + graph staleness autobuild) | UX + freshness | N / D | Non-token guarantee: git state + hot files + handoff reminder + stale-graph auto-rebuild in background subprocess. When graph age exceeds `CONTEXT_OS_GRAPH_MAX_AGE_DAYS` (7) or more than `CONTEXT_OS_GRAPH_MAX_CHANGED` (20) source files are newer than the graph, prewarm fires `build_repo_graph.py` detached via `Popen(start_new_session=True)` — next session's auto-context reads the fresh index. |
 
 ### Summary by evidence class
 
 | Class | Count | Techniques |
 |---|---:|---|
-| **M** (directly measured) | 2 | #15 (output compression, partial), #16 (session memory, correctness only) |
+| **M** (directly measured) | 3 | #15 (output compression, partial), #16 (session memory, correctness only), #17 (auto-context precision/recall/MRR) |
 | **U** (upstream citation) | 2 | #1 (response shaping), #3 (noise filtering) |
 | **D** (derived arithmetic) | 8 | #5, #6, #7, #8, #9, #10, #11, #14 |
-| **N** (non-token) | 3 | #4, #12, #13 (partial) |
+| **N** (non-token) | 4 | #4, #12, #13 (partial), #18 (prewarm) |
 | **P** (pending) | 1 | #2 |
 
-**Bottom line:** of 16 techniques, **2** have direct measurements in this repo, **2** have upstream measurements, and **8** are arithmetic derivations from documented behavior. This is the honest picture.
+**Bottom line:** of 18 techniques, **3** have direct measurements in this repo, **2** have upstream measurements, and **8** are arithmetic derivations from documented behavior. Auto-context (added v2.3.0) is the newest measured technique — MRR 0.958 on the hand-labeled fixture means the first injected candidate is correct for 11 of 12 prompts.
 
 ---
 
