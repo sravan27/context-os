@@ -94,12 +94,22 @@ jobs:
           grep -q "ENABLE_PROMPT_CACHING_1H" .claude/settings.json || { echo "FAIL: settings.json missing ENABLE_PROMPT_CACHING_1H"; cat .claude/settings.json; exit 1; }
           grep -q "allowedTools" .claude/settings.json || { echo "FAIL: settings.json missing allowedTools"; cat .claude/settings.json; exit 1; }
           test -f .claude/commands/cheap.md || { echo "FAIL: cheap.md missing"; exit 1; }
+          test -f .claude/commands/find.md || { echo "FAIL: find.md missing"; exit 1; }
+          test -f .claude/commands/deps.md || { echo "FAIL: deps.md missing"; exit 1; }
+          test -f .claude/commands/hot.md || { echo "FAIL: hot.md missing"; exit 1; }
+          test -f .claude/commands/warm-clear.md || { echo "FAIL: warm-clear.md missing"; exit 1; }
+          test -f .claude/commands/relevant.md || { echo "FAIL: relevant.md missing"; exit 1; }
           test -f .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py missing"; exit 1; }
           test -f .claude/hooks/loop_guard.py || { echo "FAIL: loop_guard.py missing"; exit 1; }
+          test -f .claude/hooks/file_size_guard.py || { echo "FAIL: file_size_guard.py missing"; exit 1; }
           test -f .claude/hooks/session_profile.py || { echo "FAIL: session_profile.py missing"; exit 1; }
           test -x .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py not executable"; exit 1; }
+          test -x .claude/hooks/file_size_guard.py || { echo "FAIL: file_size_guard.py not executable"; exit 1; }
+          test -f .context-os/build_repo_graph.py || { echo "FAIL: build_repo_graph.py missing"; exit 1; }
+          test -f .context-os/repo-graph.json || { echo "FAIL: repo-graph.json not generated"; exit 1; }
           grep -q "dedup_guard.py" .claude/settings.local.json || { echo "FAIL: dedup_guard not wired"; cat .claude/settings.local.json; exit 1; }
           grep -q "loop_guard.py" .claude/settings.local.json || { echo "FAIL: loop_guard not wired"; exit 1; }
+          grep -q "file_size_guard.py" .claude/settings.local.json || { echo "FAIL: file_size_guard not wired"; exit 1; }
           grep -q "session_profile.py" .claude/settings.local.json || { echo "FAIL: session_profile not wired"; exit 1; }
           # dedup_guard: first call exits 0, second identical call exits 2
           echo '{"session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/tmp/ci.txt"}}' | python3 .claude/hooks/dedup_guard.py
@@ -122,6 +132,33 @@ jobs:
           echo '{"session_id":"ci","transcript_path":"/tmp/ci-transcript.jsonl","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/session_profile.py
           test -d .context-os/session-reports || { echo "FAIL: session-reports dir not created"; exit 1; }
           ls .context-os/session-reports/*.md >/dev/null || { echo "FAIL: no session report written"; exit 1; }
+          # file_size_guard: allow small file, block large file without offset
+          printf 'small\n' > /tmp/ci-small.txt
+          set +e
+          echo '{"tool_name":"Read","tool_input":{"file_path":"/tmp/ci-small.txt"}}' | python3 .claude/hooks/file_size_guard.py
+          rc=$?
+          set -e
+          test "$rc" = "0" || { echo "FAIL: file_size_guard should allow small file, got $rc"; exit 1; }
+          python3 -c "print('x\n'*2000)" > /tmp/ci-big.txt
+          set +e
+          echo '{"tool_name":"Read","tool_input":{"file_path":"/tmp/ci-big.txt"}}' | python3 .claude/hooks/file_size_guard.py 2>/dev/null
+          rc=$?
+          set -e
+          test "$rc" = "2" || { echo "FAIL: file_size_guard should block 2000-line file, got $rc"; exit 1; }
+          # With offset set, should allow even big files
+          set +e
+          echo '{"tool_name":"Read","tool_input":{"file_path":"/tmp/ci-big.txt","offset":1,"limit":50}}' | python3 .claude/hooks/file_size_guard.py
+          rc=$?
+          set -e
+          test "$rc" = "0" || { echo "FAIL: file_size_guard should allow with offset, got $rc"; exit 1; }
+          # repo-graph.json structure: has symbol_index and files keys
+          python3 -c "
+          import json, sys
+          g = json.load(open('.context-os/repo-graph.json'))
+          for key in ['version', 'files', 'symbol_index', 'imported_by', 'hot_files']:
+              if key not in g: sys.exit(f'FAIL: repo-graph.json missing {key}')
+          print(f'repo-graph OK: {g[\"file_count\"]} files, {g[\"symbol_count\"]} symbols')
+          "
           # statusLine script should produce output when piped JSON
           echo '{"model":{"display_name":"test"},"workspace":{"current_dir":"/tmp/cos-install"}}' | bash .claude/statusline.sh > /tmp/sl.out
           test -s /tmp/sl.out || { echo "FAIL: statusline.sh produced no output"; exit 1; }
@@ -164,4 +201,12 @@ jobs:
           test ! -f .claude/statusline.sh
           test ! -f .claude/hooks/dedup_guard.py
           test ! -f .claude/hooks/loop_guard.py
+          test ! -f .claude/hooks/file_size_guard.py
           test ! -f .claude/hooks/session_profile.py
+          test ! -f .context-os/build_repo_graph.py
+          test ! -f .context-os/repo-graph.json
+          test ! -f .claude/commands/find.md
+          test ! -f .claude/commands/deps.md
+          test ! -f .claude/commands/hot.md
+          test ! -f .claude/commands/warm-clear.md
+          test ! -f .claude/commands/relevant.md

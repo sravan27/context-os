@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -262,10 +262,16 @@ if [ "${1:-}" = "--status" ]; then
   else
     check fail "statusLine" "not installed"
   fi
-  if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/session_profile.py ]; then
-    check ok "python hooks" "dedup + loop-guard + profiler installed"
+  if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/file_size_guard.py ] && [ -f .claude/hooks/session_profile.py ]; then
+    check ok "python hooks" "dedup + loop-guard + size-guard + profiler installed"
   else
     check fail "python hooks" "not installed"
+  fi
+  if [ -f .context-os/repo-graph.json ] && [ -f .context-os/build_repo_graph.py ]; then
+    GSTAT=$(python3 -c "import json; g=json.load(open('.context-os/repo-graph.json')); print(f\"{g['file_count']}f / {g['symbol_count']}sym\")" 2>/dev/null || echo "present")
+    check ok "repo graph" "$GSTAT (.context-os/repo-graph.json)"
+  else
+    check fail "repo graph" "not built"
   fi
   if [ -f .claude/settings.local.json ] && grep -q 'context-os hook' .claude/settings.local.json 2>/dev/null; then
     check ok "binary hooks" "active (output compression + memory)"
@@ -339,7 +345,7 @@ try:
 except: pass
 " 2>/dev/null && echo "  removed allowedTools from settings.json"
   fi
-  for cmd in compact context ship cheap; do
+  for cmd in compact context ship cheap find deps hot warm-clear relevant; do
     [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
   done
   for agent in explorer; do
@@ -347,7 +353,7 @@ except: pass
   done
   [ -f .claude/output-styles/terse.md ] && rm .claude/output-styles/terse.md && echo "  removed /.claude/output-styles/terse.md"
   [ -f .claude/statusline.sh ] && rm .claude/statusline.sh && echo "  removed /.claude/statusline.sh"
-  for h in dedup_guard.py loop_guard.py session_profile.py; do
+  for h in dedup_guard.py loop_guard.py file_size_guard.py session_profile.py; do
     [ -f ".claude/hooks/$h" ] && rm ".claude/hooks/$h" && echo "  removed .claude/hooks/$h"
   done
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
@@ -503,10 +509,255 @@ ${MAP_LINES}\`\`\`"
 fi
 
 # ============================================================================
-# STEP 1: CLAUDE.md — Response shaping (saves 40-65% output tokens)
+# STEP 1: Repo graph — symbol index + imports + hot files (no grep)
 # ============================================================================
+# Generates .context-os/repo-graph.json: per-file top-level symbols, import
+# edges, and hot files from `git log`. Queried by the /find, /deps, /hot
+# slash commands (no grep of user files). Pure stdlib regex — no LSP, no
+# tree-sitter, no external deps. Rebuild any time:
+#     python3 .context-os/build_repo_graph.py .
 STEP=1
-TOTAL=11
+TOTAL=12
+mkdir -p .context-os
+
+cat > .context-os/build_repo_graph.py <<'CONTEXT_OS_GRAPH_EOF'
+#!/usr/bin/env python3
+"""
+build_repo_graph.py — Context OS repo graph generator.
+
+Zero-dependency (stdlib only) walker that extracts:
+- Top-level symbols per source file (Rust, Python, JS, TS, Go)
+- Import edges (who imports whom)
+- Hot files from git log (change frequency, last 90 days)
+
+Writes `.context-os/repo-graph.json` and prints a short markdown summary to
+stdout for setup.sh to embed into CLAUDE.md. Runs in a few hundred ms on
+most repos; skips node_modules/target/dist/etc. automatically.
+
+Invoked:
+    python3 build_repo_graph.py [repo_root]
+
+Exit 0 always. Failure to parse any file is silent (partial graphs are fine).
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+LANG_PATTERNS = {
+    "rust": {
+        "exts": [".rs"],
+        "symbol": re.compile(
+            r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?"
+            r"(fn|struct|enum|trait|type|mod|const|static)\s+([A-Za-z_][A-Za-z0-9_]*)"
+        ),
+        "import": re.compile(r"^\s*use\s+([A-Za-z_][\w:]*)"),
+    },
+    "python": {
+        "exts": [".py"],
+        "symbol": re.compile(r"^(?:async\s+)?(def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"),
+        "import": re.compile(
+            r"^\s*(?:from\s+([A-Za-z_][\w.]*)\s+import|import\s+([A-Za-z_][\w.]*))"
+        ),
+    },
+    "javascript": {
+        "exts": [".js", ".mjs", ".cjs", ".jsx"],
+        "symbol": re.compile(
+            r"^export\s+(?:default\s+)?(?:async\s+)?"
+            r"(function|class|const|let|var)\s+([A-Za-z_$][\w$]*)"
+        ),
+        "import": re.compile(
+            r"""^\s*(?:import\b[^"']*from\s+["']([^"']+)["']"""
+            r"""|const\s+[\w{},\s*]+\s*=\s*require\(\s*["']([^"']+)["']\s*\))"""
+        ),
+    },
+    "typescript": {
+        "exts": [".ts", ".tsx"],
+        "symbol": re.compile(
+            r"^export\s+(?:default\s+)?(?:async\s+)?"
+            r"(function|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)"
+        ),
+        "import": re.compile(r"""^\s*import\b[^"']*from\s+["']([^"']+)["']"""),
+    },
+    "go": {
+        "exts": [".go"],
+        "symbol": re.compile(
+            r"^func\s+(?:\([^)]*\)\s+)?([A-Z][\w]*)\s*\(|^type\s+([A-Z][\w]*)"
+        ),
+        "import": re.compile(r'^\s*"([^"]+)"'),
+    },
+}
+
+EXCLUDE_DIRS = {
+    "node_modules", "target", "dist", "build", ".next", ".git", ".venv", "venv",
+    "__pycache__", ".pytest_cache", "coverage", ".turbo", ".cache",
+    ".mypy_cache", ".ruff_cache", ".tox", "bower_components", "vendor",
+    ".idea", ".vscode", ".context-os",
+}
+
+MAX_LINES_SCAN = 20000
+
+
+def walk_sources(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in EXCLUDE_DIRS and not d.startswith(".")
+        ]
+        for fn in filenames:
+            if fn.startswith("."):
+                continue
+            ext = os.path.splitext(fn)[1]
+            for lang, cfg in LANG_PATTERNS.items():
+                if ext in cfg["exts"]:
+                    path = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(path, root)
+                    yield rel, lang, path, cfg
+                    break
+
+
+def extract(path, cfg):
+    symbols = []
+    imports = []
+    line_count = 0
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for i, line in enumerate(f, 1):
+                if i > MAX_LINES_SCAN:
+                    break
+                line_count = i
+                s = cfg["symbol"].search(line)
+                if s:
+                    groups = [g for g in s.groups() if g]
+                    if len(groups) >= 2:
+                        symbols.append({"name": groups[1], "kind": groups[0], "line": i})
+                    elif len(groups) == 1:
+                        symbols.append({"name": groups[0], "kind": "symbol", "line": i})
+                im = cfg["import"].search(line)
+                if im:
+                    modules = [g for g in im.groups() if g]
+                    if modules:
+                        imports.append(modules[0])
+    except Exception:
+        pass
+    seen = set()
+    unique_imports = []
+    for m in imports:
+        if m not in seen:
+            seen.add(m)
+            unique_imports.append(m)
+    return symbols, unique_imports, line_count
+
+
+def hot_files(root, max_items=20):
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", root, "log", "--name-only", "--since=90.days",
+             "--pretty=format:", "-n", "500"],
+            stderr=subprocess.DEVNULL, text=True, timeout=15,
+        )
+    except Exception:
+        return []
+    counts = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        top = line.split("/", 1)[0]
+        if top in EXCLUDE_DIRS:
+            continue
+        base = os.path.basename(line).lower()
+        if base in {"package-lock.json", "yarn.lock", "cargo.lock",
+                   "poetry.lock", "pnpm-lock.yaml", "composer.lock"}:
+            continue
+        counts[line] = counts.get(line, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: -kv[1])[:max_items]
+    return [{"path": p, "touches": c} for p, c in ranked]
+
+
+def build(root):
+    files = {}
+    symbol_index = {}
+    imported_by = {}
+    for rel, lang, path, cfg in walk_sources(root):
+        symbols, imports, lines = extract(path, cfg)
+        files[rel] = {"lang": lang, "lines": lines, "symbols": symbols, "imports": imports}
+        for sym in symbols:
+            symbol_index.setdefault(sym["name"], []).append(
+                {"file": rel, "line": sym["line"], "kind": sym["kind"]}
+            )
+        for im in imports:
+            imported_by.setdefault(im, []).append(rel)
+    return {
+        "version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "repo_root": os.path.abspath(root),
+        "file_count": len(files),
+        "symbol_count": sum(len(f["symbols"]) for f in files.values()),
+        "hot_files": hot_files(root),
+        "files": files,
+        "symbol_index": symbol_index,
+        "imported_by": imported_by,
+    }
+
+
+def summary_md(graph):
+    lines = []
+    lines.append(
+        f"- Graph: {graph['file_count']} files, "
+        f"{graph['symbol_count']} top-level symbols indexed."
+    )
+    hf = graph.get("hot_files", [])
+    if hf:
+        top = ", ".join(f"`{h['path']}` ({h['touches']})" for h in hf[:5])
+        lines.append(f"- Hot files (90d): {top}")
+    lines.append(
+        "- Query via `/find <symbol>`, `/deps <file>`, `/hot` — "
+        "reads `.context-os/repo-graph.json` (no grep)."
+    )
+    return "\n".join(lines)
+
+
+def main():
+    root = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
+    try:
+        graph = build(root)
+    except Exception as e:
+        sys.stderr.write(f"[context-os] repo-graph build failed: {e}\n")
+        return 0
+    out_dir = os.path.join(root, ".context-os")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "repo-graph.json")
+        with open(out_path, "w") as f:
+            json.dump(graph, f, separators=(",", ":"))
+    except Exception as e:
+        sys.stderr.write(f"[context-os] repo-graph write failed: {e}\n")
+        return 0
+    print(summary_md(graph))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+CONTEXT_OS_GRAPH_EOF
+chmod +x .context-os/build_repo_graph.py
+
+GRAPH_SUMMARY=""
+if GRAPH_SUMMARY=$(python3 .context-os/build_repo_graph.py . 2>/dev/null) && [ -f .context-os/repo-graph.json ]; then
+  GRAPH_STATS=$(python3 -c "import json; g=json.load(open('.context-os/repo-graph.json')); print(f\"{g['file_count']} files, {g['symbol_count']} symbols\")" 2>/dev/null || echo "built")
+  echo "  [$STEP/$TOTAL] built repo graph ($GRAPH_STATS)"
+else
+  GRAPH_SUMMARY="- Graph: not built (no source files detected, or Python unavailable)."
+  echo "  [$STEP/$TOTAL] repo graph skipped"
+fi
+
+# ============================================================================
+# STEP 2: CLAUDE.md — Response shaping (saves 40-65% output tokens)
+# ============================================================================
+STEP=2
 MARKER_START="<!-- context-os:start -->"
 MARKER_END="<!-- context-os:end -->"
 
@@ -546,7 +797,14 @@ Use \`/compact\` before context fills up to save state.
 
 - \`dedup_guard.py\`: blocks duplicate Read/Glob/Grep within 10min. On \"[context-os] Skipping duplicate\", use the previous result from history, don't re-Read.
 - \`loop_guard.py\`: warns at edit #5 / blocks at edit #8 on same file. If warned, step back and re-read the full file or run tests to see real errors before another edit.
+- \`file_size_guard.py\`: blocks Read on files > 1500 lines without offset/limit. Retry with \`offset=N, limit=M\` or delegate to the \`explorer\` subagent.
 - \`session_profile.py\`: Stop-time report at \`.context-os/session-reports/\`. Check it after long sessions to see where tokens went.
+
+# Repo graph (.context-os/repo-graph.json)
+
+$GRAPH_SUMMARY
+
+Use \`/find <symbol>\`, \`/deps <file>\`, \`/hot\` before grep. Rebuild via \`python3 .context-os/build_repo_graph.py .\`.
 $MARKER_END"
 
 if [ -f CLAUDE.md ]; then
@@ -571,9 +829,9 @@ else
 fi
 
 # ============================================================================
-# STEP 2: .claudeignore — Noise + secrets (30-40% context reduction)
+# STEP 3: .claudeignore — Noise + secrets (30-40% context reduction)
 # ============================================================================
-STEP=2
+STEP=3
 if [ ! -f .claudeignore ]; then
   # Always include standard noise — covers future-created dirs (node_modules after npm i, etc.)
   IGNORES=""
@@ -680,9 +938,9 @@ else
 fi
 
 # ============================================================================
-# STEP 3: .claude/settings.json — Env vars (thinking cap, prompt caching, traffic control)
+# STEP 4: .claude/settings.json — Env vars (thinking cap, prompt caching, traffic control)
 # ============================================================================
-STEP=3
+STEP=4
 mkdir -p .claude
 SETTINGS_JSON=".claude/settings.json"
 
@@ -715,9 +973,9 @@ else
 fi
 
 # ============================================================================
-# STEP 4: Permission auto-granting — pre-approve safe tools
+# STEP 5: Permission auto-granting — pre-approve safe tools
 # ============================================================================
-STEP=4
+STEP=5
 ALLOWED_TOOLS='[
   "Read",
   "Glob",
@@ -758,9 +1016,9 @@ else
 fi
 
 # ============================================================================
-# STEP 5: Slash commands — /compact, /context, /ship, /cheap
+# STEP 6: Slash commands — /compact, /context, /ship, /cheap
 # ============================================================================
-STEP=5
+STEP=6
 mkdir -p .claude/commands
 
 cat > .claude/commands/compact.md << 'CMDEOF'
@@ -802,12 +1060,84 @@ Run this task using the explorer subagent (Haiku model — 15x cheaper than Sonn
 $ARGUMENTS
 CMDEOF
 
-echo "  [$STEP/$TOTAL] installed 4 slash commands (/compact, /context, /ship, /cheap)"
+cat > .claude/commands/find.md << 'CMDEOF'
+---
+description: Find a symbol by name via the repo graph (no grep)
+argument-hint: <symbol-name>
+---
+1. Read `.context-os/repo-graph.json`.
+2. In the `symbol_index` object, look up the exact key `$ARGUMENTS`.
+3. If found, print each occurrence as: `path:line (kind)` — one per line, up to 10.
+4. If more than 10 matches, print "+N more".
+5. If the key is missing, also try case-insensitive / substring match against keys and print the top 5 candidates.
+6. If `.context-os/repo-graph.json` doesn't exist, tell the user: `python3 .context-os/build_repo_graph.py .` to build it.
+
+Do NOT grep. Do NOT read source files. Just the JSON lookup.
+CMDEOF
+
+cat > .claude/commands/deps.md << 'CMDEOF'
+---
+description: Show imports + importers for a file via the repo graph
+argument-hint: <file-path>
+---
+Read `.context-os/repo-graph.json`. For the file `$ARGUMENTS`:
+
+1. Print `**Imports** (from files["$ARGUMENTS"].imports):` then each import on its own line, up to 15.
+2. Print `**Importers** (likely):` — scan `imported_by` keys; for any key whose tail matches the basename of `$ARGUMENTS` without extension, print the value list. Up to 15.
+3. Print `**Same-module neighbors:**` — other files in the same directory as `$ARGUMENTS` (from `files` keys).
+
+No grep. No source reads. If the graph is missing, tell the user to rebuild.
+CMDEOF
+
+cat > .claude/commands/hot.md << 'CMDEOF'
+---
+description: List files with highest git change frequency (last 90 days)
+---
+Read `.context-os/repo-graph.json` → `hot_files`. Print as a numbered list: `N. <path> — <touches> commits`. Show all available (up to 20). If the list is empty, tell the user this repo has no git history or the graph wasn't built.
+CMDEOF
+
+cat > .claude/commands/warm-clear.md << 'CMDEOF'
+---
+description: Write a handoff packet, then prompt for /clear
+---
+Before the user runs `/clear`, write a succinct handoff to `.context-os/handoff.md` with these sections:
+
+- **OBJECTIVE**: current goal in one line
+- **DECISIONS**: last 3-5 decisions made (bullet)
+- **FILES**: files modified or key files referenced (bullet)
+- **FAILED**: what didn't work (bullet, so we don't retry)
+- **NEXT**: one-line "what to do next"
+
+Keep the whole file under 40 lines. Then output exactly:
+
+> Handoff written. Run `/clear` to reset — then paste `.context-os/handoff.md` into the new session.
+CMDEOF
+
+cat > .claude/commands/relevant.md << 'CMDEOF'
+---
+description: Find files most relevant to a query via the repo graph (semantic-lite)
+argument-hint: <query>
+---
+Read `.context-os/repo-graph.json`. For the query `$ARGUMENTS`:
+
+1. Tokenize the query (lowercase, split on non-alphanumeric, drop words < 3 chars).
+2. For each file in `files`, score:
+   - +5 per matching symbol name (in `files[file].symbols[].name`)
+   - +3 per matching import (in `files[file].imports`)
+   - +2 if any query token is a substring of the file path
+   - +1 if the file is in `hot_files`
+3. Print the top 10 as: `score  path  (N symbols, lang)` — one per line.
+4. Skip files with score 0.
+
+Do NOT read source files. Do NOT grep. Score purely from the graph JSON.
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 9 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant)"
 
 # ============================================================================
-# STEP 6: Haiku subagent — 15x cheaper than Opus for exploration
+# STEP 7: Haiku subagent — 15x cheaper than Opus for exploration
 # ============================================================================
-STEP=6
+STEP=7
 mkdir -p .claude/agents
 
 cat > .claude/agents/explorer.md << 'AGENTEOF'
@@ -837,9 +1167,9 @@ AGENTEOF
 echo "  [$STEP/$TOTAL] installed explorer subagent (Haiku — 15x cheaper)"
 
 # ============================================================================
-# STEP 7: Output style — enforces terse responses at every turn
+# STEP 8: Output style — enforces terse responses at every turn
 # ============================================================================
-STEP=7
+STEP=8
 mkdir -p .claude/output-styles
 
 cat > .claude/output-styles/terse.md << 'STYLEOF'
@@ -886,9 +1216,9 @@ STYLEOF
 echo "  [$STEP/$TOTAL] installed 'terse' output style (/output-style terse)"
 
 # ============================================================================
-# STEP 8: statusLine — live context + cost visibility in every prompt
+# STEP 9: statusLine — live context + cost visibility in every prompt
 # ============================================================================
-STEP=8
+STEP=9
 cat > .claude/statusline.sh << 'SLEOF'
 #!/usr/bin/env bash
 # Context OS statusLine: shows model, git branch, and context budget status.
@@ -938,7 +1268,7 @@ else
 fi
 
 # ============================================================================
-# STEP 9: Python hooks — dedup-guard, loop-guard, session-profile (zero-dep)
+# STEP 10: Python hooks — dedup-guard, loop-guard, session-profile (zero-dep)
 # ============================================================================
 # These hooks are pure Python stdlib, no binary required. They catch the
 # three most common waste patterns in Claude Code sessions:
@@ -946,7 +1276,7 @@ fi
 #   - loop_guard: warns at 5 edits / blocks at 8 edits on same file
 #   - session_profile: writes a per-session token breakdown on Stop
 # All three fail-open — any error or unexpected input exits 0 silently.
-STEP=9
+STEP=10
 HOOK_DIR=".claude/hooks"
 mkdir -p "$HOOK_DIR"
 
@@ -1294,6 +1624,86 @@ if __name__ == "__main__":
 CONTEXT_OS_PROFILE_EOF
 chmod +x "$HOOK_DIR/session_profile.py"
 
+# --- file_size_guard.py ---------------------------------------------
+cat > "$HOOK_DIR/file_size_guard.py" <<'CONTEXT_OS_SIZE_EOF'
+#!/usr/bin/env python3
+"""
+file_size_guard.py - Context OS PreToolUse hook.
+
+Blocks Read on files larger than a threshold when no offset/limit is set.
+Nudges Claude to use offset+limit or delegate to the explorer subagent,
+rather than blow 10k-20k tokens on a generated or lockfile read.
+
+Env overrides:
+- CONTEXT_OS_FILE_SIZE_THRESHOLD (default: 1500 lines)
+- CONTEXT_OS_FILE_SIZE_HARD      (default: 5000 lines)
+- CONTEXT_OS_FILE_SIZE_GUARD=0   (disables entirely)
+
+Fail-open on any error.
+"""
+import json
+import os
+import sys
+
+
+def main():
+    if os.environ.get("CONTEXT_OS_FILE_SIZE_GUARD") == "0":
+        return 0
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        return 0
+    if event.get("tool_name") != "Read":
+        return 0
+    inp = event.get("tool_input") or {}
+    path = inp.get("file_path")
+    if not path:
+        return 0
+    if inp.get("offset") is not None or inp.get("limit") is not None:
+        return 0
+    try:
+        if not os.path.isfile(path):
+            return 0
+    except Exception:
+        return 0
+    try:
+        threshold = int(os.environ.get("CONTEXT_OS_FILE_SIZE_THRESHOLD", "1500"))
+        hard_cap = int(os.environ.get("CONTEXT_OS_FILE_SIZE_HARD", "5000"))
+    except ValueError:
+        return 0
+    count_cap = hard_cap + 1
+    line_count = 0
+    try:
+        with open(path, "rb") as f:
+            for line_count, _ in enumerate(f, 1):
+                if line_count >= count_cap:
+                    break
+    except Exception:
+        return 0
+    if line_count <= threshold:
+        return 0
+    over_hard = line_count >= count_cap
+    label = f">{hard_cap}" if over_hard else str(line_count)
+    msg = (
+        f"[context-os] {path} has {label} lines "
+        f"(threshold {threshold}). Options:\n"
+        f"  - Read(file_path, offset=N, limit=M) to read a slice\n"
+        f"  - Grep(pattern, path=\"{path}\") to search within it\n"
+        f"  - Delegate to the `explorer` Haiku subagent for broad exploration\n"
+        f"Set CONTEXT_OS_FILE_SIZE_GUARD=0 to disable."
+    )
+    sys.stderr.write(msg + "\n")
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_SIZE_EOF
+chmod +x "$HOOK_DIR/file_size_guard.py"
+
 # Merge Python hooks into settings.local.json. Additive merge — preserves any
 # existing hooks (e.g. from the optional binary-based step below).
 PY_ABS="$(cd "$HOOK_DIR" && pwd)"
@@ -1304,7 +1714,8 @@ PYTHON_HOOKS=$(cat <<HOOKJSON
   "hooks": {
     "PreToolUse": [
       {"matcher": "Read|Glob|Grep", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/dedup_guard.py'", "timeout": 3}]},
-      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/loop_guard.py'", "timeout": 3}]}
+      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/loop_guard.py'", "timeout": 3}]},
+      {"matcher": "Read", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/file_size_guard.py'", "timeout": 3}]}
     ],
     "Stop": [
       {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/session_profile.py'", "timeout": 15}]}
@@ -1331,16 +1742,16 @@ for event, entries in new_hooks.items():
             existing['hooks'][event].append(entry)
             seen.add(sig)
 json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
-" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 3 Python hooks (dedup, loop-guard, profiler)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
+" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 4 Python hooks (dedup, loop-guard, size-guard, profiler)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
 else
   printf '%s' "$PYTHON_HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$PYTHON_HOOKS" > "$SETTINGS_LOCAL"
-  echo "  [$STEP/$TOTAL] installed 3 Python hooks (dedup, loop-guard, profiler)"
+  echo "  [$STEP/$TOTAL] installed 4 Python hooks (dedup, loop-guard, size-guard, profiler)"
 fi
 
 # ============================================================================
-# STEP 10: Binary hooks — output compression + session memory (needs binary)
+# STEP 11: Binary hooks — output compression + session memory (needs binary)
 # ============================================================================
-STEP=10
+STEP=11
 BIN=""
 if command -v context-os &>/dev/null; then
   BIN="context-os"
@@ -1412,9 +1823,9 @@ else
 fi
 
 # ============================================================================
-# STEP 11: .gitignore
+# STEP 12: .gitignore
 # ============================================================================
-STEP=11
+STEP=12
 if [ -f .gitignore ]; then
   if ! grep -q '.context-os' .gitignore 2>/dev/null; then
     printf '\n# Context OS local state\n.context-os/\n.claude/settings.local.json\n' >> .gitignore
@@ -1457,11 +1868,13 @@ printf "  ✓ %-22s %s\n" "prompt caching 1h" "5min→1hr TTL (huge on long sess
 printf "  ✓ %-22s %s\n" "traffic control" "non-essential API calls disabled"
 printf "  ✓ %-22s %s\n" "context cap" "150K max (prevents runaway sessions)"
 printf "  ✓ %-22s %s\n" "allowed tools" "15 pre-approved (zero confirmation prompts)"
-printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship /cheap"
+printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant"
 printf "  ✓ %-22s %s\n" "haiku subagent" "/explorer for cheap exploration"
 printf "  ✓ %-22s %s\n" "secret filtering" ".env, *.pem, credentials blocked"
+printf "  ✓ %-22s %s\n" "repo graph" "symbols + imports + hot files (.context-os/repo-graph.json)"
 printf "  ✓ %-22s %s\n" "dedup guard" "blocks duplicate Read/Glob/Grep within 10min"
 printf "  ✓ %-22s %s\n" "loop guard" "warns at 5 edits, blocks at 8 on same file"
+printf "  ✓ %-22s %s\n" "size guard" "blocks Read on files >1500 lines without offset"
 printf "  ✓ %-22s %s\n" "session profiler" "per-session token report → .context-os/session-reports/"
 
 if [ -n "$BIN" ]; then

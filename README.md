@@ -3,7 +3,7 @@
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Context OS is a curated set of token optimizations for Claude Code, packaged as an idempotent, reversible installer. It writes `CLAUDE.md`, `.claudeignore`, `settings.json`, slash commands, an output style, a statusLine, a Haiku subagent, and three zero-dependency Python hooks (dedup guard, loop guard, session profiler) into your project. Not a wrapper, not a proxy, no runtime dependency besides `python3` for the hooks (with an optional Rust binary for two additional hook-based techniques).
+Context OS is a curated set of token optimizations for Claude Code, packaged as an idempotent, reversible installer. It writes `CLAUDE.md`, `.claudeignore`, `settings.json`, **nine slash commands** (four of which query a pre-built repo graph so Claude can skip grep), an output style, a statusLine, a Haiku subagent, a **repo graph** (symbol index + import edges + hot files from `git log`), and **four zero-dependency Python hooks** (dedup guard, loop guard, file-size guard, session profiler). Not a wrapper, not a proxy, no runtime dependency besides `python3` for the hooks (with an optional Rust binary for two additional hook-based techniques).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
@@ -11,13 +11,13 @@ curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh |
 
 ## What it installs
 
-Nineteen techniques, grouped by delivery mechanism. Evidence column is honest about where each number comes from.
+**Twenty-four techniques**, grouped by delivery mechanism. Evidence column is honest about where each number comes from.
 
 | # | Technique | Mechanism | Evidence |
 |---|-----------|-----------|----------|
 | 1 | Response shaping | `CLAUDE.md` directives (drop preamble, recap, tool announcements) | Third-party benchmark ([caveman](https://github.com/JuliusBrussee/caveman)); ablation pending |
 | 2 | Output style `terse` | `.claude/output-styles/terse.md` invoked via `/output-style terse` | [Documented behavior](https://docs.claude.com/en/docs/claude-code/output-styles) |
-| 3 | Noise filtering | `.claudeignore` with 60+ patterns (`node_modules`, `dist`, `.next`, `target`) | Measured per-repo via `--measure`; end-to-end in [METHODOLOGY.md](docs/METHODOLOGY.md) |
+| 3 | Noise filtering | `.claudeignore` with 100+ patterns (`node_modules`, `dist`, `.next`, `target`) | Measured per-repo via `--measure`; end-to-end in [METHODOLOGY.md](docs/METHODOLOGY.md) |
 | 4 | Secret exclusion | `.claudeignore` blocks `.env`, `*.pem`, `credentials.json`, SSH/AWS | Documented behavior |
 | 5 | Repo map + stack hints | `CLAUDE.md` block generated from stack detection | Ablation pending |
 | 6 | Thinking budget cap | `MAX_THINKING_TOKENS=8000` in `settings.json` | [Documented env var](https://docs.claude.com/en/docs/claude-code/settings#environment-variables) |
@@ -27,15 +27,20 @@ Nineteen techniques, grouped by delivery mechanism. Evidence column is honest ab
 | 10 | Context cap | `CLAUDE_CODE_MAX_CONTEXT_TOKENS=150000` | Documented env var |
 | 11 | Permission auto-grant | `settings.json` allowlist for Read/Glob/Grep/git/test runners | Documented behavior |
 | 12 | statusLine | `.claude/statusline.sh` (model · branch · context-os marker) | Documented behavior |
-| 13 | Slash commands | `/compact`, `/context`, `/ship`, `/cheap` in `.claude/commands/` | Documented behavior |
+| 13 | Slash commands (core) | `/compact`, `/context`, `/ship`, `/cheap` in `.claude/commands/` | Documented behavior |
 | 14 | Haiku subagent | `.claude/agents/explorer.md` delegates exploration to Haiku | Model pricing ratio (Sonnet:Haiku); ablation pending |
 | 15 | **Dedup guard** | PreToolUse hook: blocks duplicate `Read`/`Glob`/`Grep` within 10min | Smoke-tested in CI; session-profile reports list how many duplicates were caught |
 | 16 | **Loop guard** | PreToolUse hook: warns at 5 edits, blocks at 8 edits on same file per session | Smoke-tested in CI; addresses a pattern called out in Claude Code best-practices |
 | 17 | **Session profiler** | Stop hook: writes per-session token breakdown to `.context-os/session-reports/` — surfaces duplicate tool calls, edit loops, oversized results | Deterministic transcript parser; no telemetry phones home |
 | 18 | Output compression (Rust) | PostToolUse hook wraps test/build output through typed reducers | Measured on 50-test cargo fixture (see METHODOLOGY.md §4) |
 | 19 | Session memory (Rust) | PreCompact + Stop hooks write restart packet | Measured on fail-edit-pass cycle (see METHODOLOGY.md §5) |
+| 20 | **Repo graph** | Install-time `.context-os/repo-graph.json`: top-level symbols, import edges, hot files from `git log --since=90d`. Walker is pure stdlib regex — Rust/Python/JS/TS/Go. No LSP, no tree-sitter. | Smoke-tested in CI; ~67KB on this 36-file repo |
+| 21 | **File-size guard** | PreToolUse hook: blocks `Read` on files > 1500 lines without `offset/limit`. Nudges Claude to use a slice or delegate to explorer subagent. | Smoke-tested in CI; env-overridable threshold |
+| 22 | **`/find <symbol>`** | Slash command: lookup in `symbol_index` → `file:line (kind)`. No grep. | Ships with graph — trivial Claude-side JSON parse |
+| 23 | **`/deps <file>`** | Slash command: lookup imports + importers. Surfaces dependency subgraph without reading source. | Ships with graph |
+| 24 | **`/hot`, `/warm-clear`, `/relevant <query>`** | `/hot` = top files by git change frequency. `/warm-clear` = write handoff before `/clear`. `/relevant` = TF-IDF-lite relevance score from graph (no reads, no grep). | Ships with graph |
 
-Techniques 1–17 install via `setup.sh` (shell + Python stdlib only). Techniques 18–19 require the optional Rust binary.
+Techniques 1–17, 20–24 install via `setup.sh` (shell + Python stdlib only). Techniques 18–19 require the optional Rust binary.
 
 ## What it doesn't do
 
@@ -124,7 +129,7 @@ Component-level measurements (see METHODOLOGY.md for each):
 
 ## Architecture
 
-`setup.sh` is a single shell script that writes 14 config-only techniques plus 3 Python hooks. It detects stack, generates `CLAUDE.md` with a `<!-- context-os -->` block, writes `.claudeignore`, merges `.claude/settings.json`, drops slash commands / output style / statusLine / explorer subagent into `.claude/`, and installs `.claude/hooks/{dedup_guard,loop_guard,session_profile}.py` with a merged entry in `.claude/settings.local.json`.
+`setup.sh` is a single shell script that writes 15 config-only techniques plus 4 Python hooks plus a repo graph builder. It detects stack, builds `.context-os/repo-graph.json` (symbol index + import edges + hot files), generates `CLAUDE.md` with a `<!-- context-os -->` block that embeds the graph summary, writes `.claudeignore`, merges `.claude/settings.json`, drops nine slash commands (`/compact`, `/context`, `/ship`, `/cheap`, `/find`, `/deps`, `/hot`, `/warm-clear`, `/relevant`) / output style / statusLine / explorer subagent into `.claude/`, and installs `.claude/hooks/{dedup_guard,loop_guard,file_size_guard,session_profile}.py` plus `.context-os/build_repo_graph.py` with merged entries in `.claude/settings.local.json`.
 
 The Python hooks are zero-dependency (stdlib only), fail-open on any error (never break a user session), and store per-session state under `~/.context-os/state/`. Each hook is auditable — cat it and read 100 lines.
 
