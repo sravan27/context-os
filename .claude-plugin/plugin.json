@@ -1,7 +1,7 @@
 {
   "name": "context-os",
-  "description": "Token optimization layer for Claude Code — repo graph (symbol index + import edges + hot files), nine slash commands (four query the graph instead of grep), four zero-dep Python hooks (dedup/loop/file-size/session-profile), noise filtering, prompt caching, response shaping. 24 techniques, one installer.",
-  "version": "2.1.0",
+  "description": "Token optimization layer for Claude Code. Adds static-analysis RAG via UserPromptSubmit hook (no embeddings, no server) — Claude's first turn starts with file:line candidates from a pre-built repo graph. Ten slash commands (four query the graph), six zero-dep Python hooks (auto_context, prewarm, dedup, loop, file-size, session-profile), noise filtering, prompt caching, response shaping. 27 techniques, one installer.",
+  "version": "2.2.0",
   "author": {
     "name": "sravan27",
     "url": "https://github.com/sravan27"

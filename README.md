@@ -3,7 +3,7 @@
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Context OS is a curated set of token optimizations for Claude Code, packaged as an idempotent, reversible installer. It writes `CLAUDE.md`, `.claudeignore`, `settings.json`, **nine slash commands** (four of which query a pre-built repo graph so Claude can skip grep), an output style, a statusLine, a Haiku subagent, a **repo graph** (symbol index + import edges + hot files from `git log`), and **four zero-dependency Python hooks** (dedup guard, loop guard, file-size guard, session profiler). Not a wrapper, not a proxy, no runtime dependency besides `python3` for the hooks (with an optional Rust binary for two additional hook-based techniques).
+Context OS is a curated set of token optimizations for Claude Code, packaged as an idempotent, reversible installer. It writes `CLAUDE.md`, `.claudeignore`, `settings.json`, **ten slash commands** (four query a pre-built repo graph so Claude can skip grep, one aggregates token-spend patterns across sessions), an output style, a statusLine, a Haiku subagent, a **repo graph** (symbol index + import edges + hot files from `git log`), and **six zero-dependency Python hooks** — including **`auto_context`**, a UserPromptSubmit hook that performs static-analysis RAG against the graph before Claude sees your prompt, and **`prewarm`**, a SessionStart hook that hands Claude a one-paragraph brief (git state, hot files, last-session flags) at Turn 1. Not a wrapper, not a proxy, no runtime dependency besides `python3` for the hooks (with an optional Rust binary for two additional hook-based techniques).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh |
 
 ## What it installs
 
-**Twenty-four techniques**, grouped by delivery mechanism. Evidence column is honest about where each number comes from.
+**Twenty-seven techniques**, grouped by delivery mechanism. Evidence column is honest about where each number comes from.
 
 | # | Technique | Mechanism | Evidence |
 |---|-----------|-----------|----------|
@@ -39,8 +39,11 @@ curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh |
 | 22 | **`/find <symbol>`** | Slash command: lookup in `symbol_index` → `file:line (kind)`. No grep. | Ships with graph — trivial Claude-side JSON parse |
 | 23 | **`/deps <file>`** | Slash command: lookup imports + importers. Surfaces dependency subgraph without reading source. | Ships with graph |
 | 24 | **`/hot`, `/warm-clear`, `/relevant <query>`** | `/hot` = top files by git change frequency. `/warm-clear` = write handoff before `/clear`. `/relevant` = TF-IDF-lite relevance score from graph (no reads, no grep). | Ships with graph |
+| 25 | **`auto_context` (graph RAG)** | UserPromptSubmit hook — parses your prompt, looks up keywords/paths/symbols in `.context-os/repo-graph.json`, and prepends a compact `<context-os:autocontext>` block with `file:line · symbol (kind) · imports` candidates. **Claude's first turn starts with structure already in hand.** No embeddings, no server, ~50ms. Env-overridable. | Smoke-tested in CI; typical save on first turn is 5–10 exploratory tool calls |
+| 26 | **`prewarm` (session brief)** | SessionStart hook — emits `<context-os:prewarm>`: handoff-packet reminder, git state (branch + uncommitted + ahead/behind), top-3 hot files, flags from the latest session report. **Turn 1 starts informed.** | Smoke-tested in CI; reuses graph + session-profile output |
+| 27 | **`/insights`** | Slash command — aggregates `.context-os/session-reports/*.md`: recurring duplicate patterns, top token-sink files, one-line actionable suggestion. | Ships with session-profile; actionable on sessions ≥ 2 |
 
-Techniques 1–17, 20–24 install via `setup.sh` (shell + Python stdlib only). Techniques 18–19 require the optional Rust binary.
+Techniques 1–17, 20–27 install via `setup.sh` (shell + Python stdlib only). Techniques 18–19 require the optional Rust binary.
 
 ## What it doesn't do
 
@@ -129,7 +132,12 @@ Component-level measurements (see METHODOLOGY.md for each):
 
 ## Architecture
 
-`setup.sh` is a single shell script that writes 15 config-only techniques plus 4 Python hooks plus a repo graph builder. It detects stack, builds `.context-os/repo-graph.json` (symbol index + import edges + hot files), generates `CLAUDE.md` with a `<!-- context-os -->` block that embeds the graph summary, writes `.claudeignore`, merges `.claude/settings.json`, drops nine slash commands (`/compact`, `/context`, `/ship`, `/cheap`, `/find`, `/deps`, `/hot`, `/warm-clear`, `/relevant`) / output style / statusLine / explorer subagent into `.claude/`, and installs `.claude/hooks/{dedup_guard,loop_guard,file_size_guard,session_profile}.py` plus `.context-os/build_repo_graph.py` with merged entries in `.claude/settings.local.json`.
+`setup.sh` is a single shell script that writes 15 config-only techniques plus 6 Python hooks plus a repo graph builder. It detects stack, builds `.context-os/repo-graph.json` (symbol index + import edges + hot files), generates `CLAUDE.md` with a `<!-- context-os -->` block that embeds the graph summary, writes `.claudeignore`, merges `.claude/settings.json`, drops ten slash commands (`/compact`, `/context`, `/ship`, `/cheap`, `/find`, `/deps`, `/hot`, `/warm-clear`, `/relevant`, `/insights`) / output style / statusLine / explorer subagent into `.claude/`, and installs `.claude/hooks/{dedup_guard,loop_guard,file_size_guard,session_profile,auto_context,prewarm}.py` plus `.context-os/build_repo_graph.py` with merged entries (PreToolUse + UserPromptSubmit + SessionStart + Stop) in `.claude/settings.local.json`.
+
+Two of the hooks are novel in Claude Code's ecosystem:
+
+- **`auto_context.py` (UserPromptSubmit).** Static-analysis RAG, no embeddings. Parses the prompt, extracts symbols/paths/keywords, ranks against the graph (exact symbol match = 10, case-insensitive = 8, file-path hit = 8, importer edge = 5, hot-file boost = +2), and prepends the top N as a compact `<context-os:autocontext>` block. The prompt hits Claude with structure already attached — first turn typically skips 5-10 exploratory tool calls. `CONTEXT_OS_AUTOCONTEXT=0` disables.
+- **`prewarm.py` (SessionStart).** Emits a 4-line session brief: handoff-packet reminder (if `.context-os/handoff.md` exists), git state (branch + dirty + ahead/behind), top-3 hot files, flags from the latest session report. `CONTEXT_OS_PREWARM=0` disables.
 
 The Python hooks are zero-dependency (stdlib only), fail-open on any error (never break a user session), and store per-session state under `~/.context-os/state/`. Each hook is auditable — cat it and read 100 lines.
 
@@ -163,7 +171,7 @@ scripts/benchmark.sh /tmp/cos-bench-test --model sonnet
 
 - Does not bypass usage limits.
 - Response shaping effectiveness varies by task: 40–65% on explanation-heavy, 13–21% on structured code generation (third-party measurement; our ablation pending).
-- Hook-based techniques depend on Claude Code exposing PreToolUse, PostToolUse, PreCompact, SessionStart, Stop.
+- Hook-based techniques depend on Claude Code exposing PreToolUse, PostToolUse, PreCompact, SessionStart, UserPromptSubmit, Stop.
 - The `<!-- context-os -->` CLAUDE.md block costs ~12–15% input overhead per turn. Amortized across a session, it pays back in 1–2 turns on non-trivial repos.
 
 ## Acknowledgments

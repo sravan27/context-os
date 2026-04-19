@@ -99,18 +99,27 @@ jobs:
           test -f .claude/commands/hot.md || { echo "FAIL: hot.md missing"; exit 1; }
           test -f .claude/commands/warm-clear.md || { echo "FAIL: warm-clear.md missing"; exit 1; }
           test -f .claude/commands/relevant.md || { echo "FAIL: relevant.md missing"; exit 1; }
+          test -f .claude/commands/insights.md || { echo "FAIL: insights.md missing"; exit 1; }
           test -f .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py missing"; exit 1; }
           test -f .claude/hooks/loop_guard.py || { echo "FAIL: loop_guard.py missing"; exit 1; }
           test -f .claude/hooks/file_size_guard.py || { echo "FAIL: file_size_guard.py missing"; exit 1; }
           test -f .claude/hooks/session_profile.py || { echo "FAIL: session_profile.py missing"; exit 1; }
+          test -f .claude/hooks/auto_context.py || { echo "FAIL: auto_context.py missing"; exit 1; }
+          test -f .claude/hooks/prewarm.py || { echo "FAIL: prewarm.py missing"; exit 1; }
           test -x .claude/hooks/dedup_guard.py || { echo "FAIL: dedup_guard.py not executable"; exit 1; }
           test -x .claude/hooks/file_size_guard.py || { echo "FAIL: file_size_guard.py not executable"; exit 1; }
+          test -x .claude/hooks/auto_context.py || { echo "FAIL: auto_context.py not executable"; exit 1; }
+          test -x .claude/hooks/prewarm.py || { echo "FAIL: prewarm.py not executable"; exit 1; }
           test -f .context-os/build_repo_graph.py || { echo "FAIL: build_repo_graph.py missing"; exit 1; }
           test -f .context-os/repo-graph.json || { echo "FAIL: repo-graph.json not generated"; exit 1; }
           grep -q "dedup_guard.py" .claude/settings.local.json || { echo "FAIL: dedup_guard not wired"; cat .claude/settings.local.json; exit 1; }
           grep -q "loop_guard.py" .claude/settings.local.json || { echo "FAIL: loop_guard not wired"; exit 1; }
           grep -q "file_size_guard.py" .claude/settings.local.json || { echo "FAIL: file_size_guard not wired"; exit 1; }
           grep -q "session_profile.py" .claude/settings.local.json || { echo "FAIL: session_profile not wired"; exit 1; }
+          grep -q "auto_context.py" .claude/settings.local.json || { echo "FAIL: auto_context not wired"; exit 1; }
+          grep -q "prewarm.py" .claude/settings.local.json || { echo "FAIL: prewarm not wired"; exit 1; }
+          grep -q "UserPromptSubmit" .claude/settings.local.json || { echo "FAIL: UserPromptSubmit event missing"; exit 1; }
+          grep -q "SessionStart" .claude/settings.local.json || { echo "FAIL: SessionStart event missing"; exit 1; }
           # dedup_guard: first call exits 0, second identical call exits 2
           echo '{"session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/tmp/ci.txt"}}' | python3 .claude/hooks/dedup_guard.py
           set +e
@@ -151,6 +160,20 @@ jobs:
           rc=$?
           set -e
           test "$rc" = "0" || { echo "FAIL: file_size_guard should allow with offset, got $rc"; exit 1; }
+          # auto_context: short prompt -> no output; prompt with symbol -> injected block
+          short_out=$(echo '{"prompt":"ok","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/auto_context.py)
+          test -z "$short_out" || { echo "FAIL: auto_context should be silent on short prompt, got: $short_out"; exit 1; }
+          long_out=$(echo '{"prompt":"please help me refactor the dedup_guard hook and the loop_guard logic","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/auto_context.py)
+          echo "$long_out" | grep -q "context-os:autocontext" || { echo "FAIL: auto_context should emit block on keyword match. output: $long_out"; exit 1; }
+          # auto_context: disabled via env
+          disabled=$(CONTEXT_OS_AUTOCONTEXT=0 echo '{"prompt":"please help me refactor the dedup_guard hook","cwd":"'"$(pwd)"'"}' | CONTEXT_OS_AUTOCONTEXT=0 python3 .claude/hooks/auto_context.py)
+          test -z "$disabled" || { echo "FAIL: auto_context should be silent when disabled, got: $disabled"; exit 1; }
+          # prewarm: emits git + hot files on a git-initialized cwd
+          prewarm_out=$(echo '{"cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/prewarm.py)
+          echo "$prewarm_out" | grep -q "context-os:prewarm" || { echo "FAIL: prewarm should emit brief on git repo. output: $prewarm_out"; exit 1; }
+          # prewarm: disabled via env
+          pre_disabled=$(echo '{"cwd":"'"$(pwd)"'"}' | CONTEXT_OS_PREWARM=0 python3 .claude/hooks/prewarm.py)
+          test -z "$pre_disabled" || { echo "FAIL: prewarm should be silent when disabled, got: $pre_disabled"; exit 1; }
           # repo-graph.json structure: has symbol_index and files keys
           python3 -c "
           import json, sys
@@ -203,6 +226,8 @@ jobs:
           test ! -f .claude/hooks/loop_guard.py
           test ! -f .claude/hooks/file_size_guard.py
           test ! -f .claude/hooks/session_profile.py
+          test ! -f .claude/hooks/auto_context.py
+          test ! -f .claude/hooks/prewarm.py
           test ! -f .context-os/build_repo_graph.py
           test ! -f .context-os/repo-graph.json
           test ! -f .claude/commands/find.md
@@ -210,3 +235,4 @@ jobs:
           test ! -f .claude/commands/hot.md
           test ! -f .claude/commands/warm-clear.md
           test ! -f .claude/commands/relevant.md
+          test ! -f .claude/commands/insights.md

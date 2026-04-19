@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -262,10 +262,10 @@ if [ "${1:-}" = "--status" ]; then
   else
     check fail "statusLine" "not installed"
   fi
-  if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/file_size_guard.py ] && [ -f .claude/hooks/session_profile.py ]; then
-    check ok "python hooks" "dedup + loop-guard + size-guard + profiler installed"
+  if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/file_size_guard.py ] && [ -f .claude/hooks/session_profile.py ] && [ -f .claude/hooks/auto_context.py ] && [ -f .claude/hooks/prewarm.py ]; then
+    check ok "python hooks" "6 installed (dedup, loop, size, profiler, autocontext, prewarm)"
   else
-    check fail "python hooks" "not installed"
+    check fail "python hooks" "not fully installed"
   fi
   if [ -f .context-os/repo-graph.json ] && [ -f .context-os/build_repo_graph.py ]; then
     GSTAT=$(python3 -c "import json; g=json.load(open('.context-os/repo-graph.json')); print(f\"{g['file_count']}f / {g['symbol_count']}sym\")" 2>/dev/null || echo "present")
@@ -345,7 +345,7 @@ try:
 except: pass
 " 2>/dev/null && echo "  removed allowedTools from settings.json"
   fi
-  for cmd in compact context ship cheap find deps hot warm-clear relevant; do
+  for cmd in compact context ship cheap find deps hot warm-clear relevant insights; do
     [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
   done
   for agent in explorer; do
@@ -353,7 +353,7 @@ except: pass
   done
   [ -f .claude/output-styles/terse.md ] && rm .claude/output-styles/terse.md && echo "  removed /.claude/output-styles/terse.md"
   [ -f .claude/statusline.sh ] && rm .claude/statusline.sh && echo "  removed /.claude/statusline.sh"
-  for h in dedup_guard.py loop_guard.py file_size_guard.py session_profile.py; do
+  for h in dedup_guard.py loop_guard.py file_size_guard.py session_profile.py auto_context.py prewarm.py; do
     [ -f ".claude/hooks/$h" ] && rm ".claude/hooks/$h" && echo "  removed .claude/hooks/$h"
   done
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
@@ -1132,7 +1132,22 @@ Read `.context-os/repo-graph.json`. For the query `$ARGUMENTS`:
 Do NOT read source files. Do NOT grep. Score purely from the graph JSON.
 CMDEOF
 
-echo "  [$STEP/$TOTAL] installed 9 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant)"
+cat > .claude/commands/insights.md << 'CMDEOF'
+---
+description: Aggregate recent session reports — top token sinks and redundant tool calls
+---
+1. Glob `.context-os/session-reports/*.md` — newest 10.
+2. For each, extract: `duplicates caught`, `edit loops`, `top-3 largest tool outputs`.
+3. Print:
+   - **Patterns (across last N sessions)**: each recurring issue with count
+   - **Top token-sink files (aggregated)**: file path + total size seen
+   - **Actionable suggestion** (1 line): e.g., "`src/x.ts` seen 4× as top sink — add to .claudeignore or always Read with offset"
+4. If no reports exist, say: "No session reports yet — session_profile writes one per Stop event."
+
+Under 20 lines total. Concrete suggestions only — no narrative.
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 10 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights)"
 
 # ============================================================================
 # STEP 7: Haiku subagent — 15x cheaper than Opus for exploration
@@ -1704,6 +1719,357 @@ if __name__ == "__main__":
 CONTEXT_OS_SIZE_EOF
 chmod +x "$HOOK_DIR/file_size_guard.py"
 
+# --- auto_context.py (UserPromptSubmit: static-analysis RAG) ---------
+cat > "$HOOK_DIR/auto_context.py" <<'CONTEXT_OS_AUTOCTX_EOF'
+#!/usr/bin/env python3
+"""
+auto_context.py - Context OS UserPromptSubmit hook.
+
+Static-analysis RAG without embeddings. Parses the user prompt for
+keywords/paths/symbols, looks them up in .context-os/repo-graph.json,
+and emits a compact "candidate files" block on stdout. Claude Code
+prepends it to the prompt as additional context, so the first turn
+starts with structure already in hand.
+
+Env:
+- CONTEXT_OS_AUTOCONTEXT=0            disable
+- CONTEXT_OS_AUTOCONTEXT_MAX=5        max hits (default 5)
+- CONTEXT_OS_AUTOCONTEXT_MIN_WORD=4   min keyword length (default 4)
+- CONTEXT_OS_AUTOCONTEXT_MIN_PROMPT=15  min prompt length to trigger
+
+Fail-open on any error. Silent on no-match.
+"""
+import json
+import os
+import re
+import sys
+
+STOPWORDS = frozenset([
+    "the","and","for","are","but","not","you","all","can","was","one","our",
+    "out","had","has","him","his","how","its","let","use","from","with","that",
+    "this","have","will","your","what","when","make","like","time","just",
+    "know","take","into","them","some","could","other","than","then","look",
+    "only","come","over","also","back","after","first","well","even","want",
+    "any","been","which","their","work","fix","add","remove","update","create",
+    "delete","change","file","files","code","function","class","method",
+    "please","thanks","help","need","should","would","show","tell","find",
+    "check","test","run","see","does","doing","done","try","using","used",
+    "still","where","there","because","about","very","really","much","more",
+    "less","most","least","without","within","across","between","through",
+    "during","before","above","below","under","same","different","new","old",
+    "good","bad","best","worst","better","worse","maybe","probably",
+    "definitely","exactly","actually","somehow","instead","rather",
+    "something","someone","somewhere","anything","anyone","anywhere",
+    "nothing","nobody","nowhere","everything","everyone","everywhere",
+    "lets","it's","isn't","wasn't","don't","doesn't","didn't","won't",
+    "can't","couldn't","shouldn't","aren't",
+])
+
+CAMEL_SPLIT = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|[_\-\s]+")
+WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+PATH_RE = re.compile(r"[\w./\-]+(?:/[\w./\-]+|\.[A-Za-z]{1,5})")
+
+
+def load_graph(root):
+    try:
+        with open(os.path.join(root, ".context-os", "repo-graph.json")) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def extract_tokens(prompt, min_word):
+    tokens = set()
+    for w in WORD_RE.findall(prompt):
+        if len(w) < min_word:
+            continue
+        low = w.lower()
+        if low in STOPWORDS:
+            continue
+        tokens.add(w)
+        for part in CAMEL_SPLIT.split(w):
+            if len(part) >= min_word and part.lower() not in STOPWORDS:
+                tokens.add(part)
+    return tokens
+
+
+def extract_paths(prompt):
+    paths = set()
+    for m in PATH_RE.findall(prompt):
+        if "://" in m or m.count(".") > 4:
+            continue
+        if len(m) >= 3:
+            paths.add(m)
+    return paths
+
+
+def rank(prompt, graph, max_hits, min_word):
+    files = graph.get("files") or {}
+    symbol_index = graph.get("symbol_index") or {}
+    imported_by = graph.get("imported_by") or {}
+    hot = {h.get("path"): h.get("touches", 0)
+           for h in (graph.get("hot_files") or [])}
+    tokens = extract_tokens(prompt, min_word)
+    paths = extract_paths(prompt)
+    candidates = {}
+
+    def bump(f, ln, kind, sym, score):
+        key = (f, ln)
+        cur = candidates.get(key)
+        if cur is None:
+            candidates[key] = {"file": f, "line": ln, "kind": kind,
+                                "symbol": sym, "score": score}
+        else:
+            cur["score"] += score
+
+    sym_lc = {k.lower(): k for k in symbol_index.keys()}
+    for tok in tokens:
+        if tok in symbol_index:
+            for loc in symbol_index[tok]:
+                bump(loc["file"], loc["line"], loc.get("kind",""), tok, 10)
+        elif tok.lower() in sym_lc:
+            real = sym_lc[tok.lower()]
+            for loc in symbol_index[real]:
+                bump(loc["file"], loc["line"], loc.get("kind",""), real, 8)
+
+    for tok in list(tokens) + list(paths):
+        tl = tok.lower()
+        for fpath in files.keys():
+            fl = fpath.lower()
+            if fl == tl or fl.endswith("/"+tl) or ("/" in tl and tl in fl):
+                bump(fpath, 1, "file", os.path.basename(fpath), 8)
+            elif len(tl) >= 5 and tl in fl:
+                bump(fpath, 1, "file", os.path.basename(fpath), 3)
+
+    for tok in tokens:
+        for mod, importers in imported_by.items():
+            if tok == mod or (len(tok) >= 5 and tok in mod):
+                for imp in importers[:3]:
+                    bump(imp, 1, "importer", mod, 5)
+
+    for c in candidates.values():
+        if c["file"] in hot:
+            c["score"] += 2
+
+    ranked = sorted(candidates.values(),
+                    key=lambda c: (-c["score"], c["file"], c["line"]))
+    per_file = {}
+    out = []
+    for c in ranked:
+        if per_file.get(c["file"], 0) >= 2:
+            continue
+        per_file[c["file"]] = per_file.get(c["file"], 0) + 1
+        out.append(c)
+        if len(out) >= max_hits:
+            break
+    return out
+
+
+def format_block(hits, graph):
+    if not hits:
+        return ""
+    files = graph.get("files") or {}
+    lines = ["<context-os:autocontext>",
+             "Graph-matched candidates (structure only, no files read yet):"]
+    for c in hits:
+        f = c["file"]; sym = c["symbol"]; kind = c["kind"]; ln = c["line"]
+        finfo = files.get(f, {})
+        imports = finfo.get("imports", [])
+        marker = f + ":" + str(ln) if ln > 1 else f
+        parts = ["`" + marker + "`"]
+        if kind and kind not in ("file", "importer"):
+            parts.append(sym + " (" + kind + ")")
+        elif kind == "importer":
+            parts.append("uses `" + sym + "`")
+        if imports and len(imports) <= 3 and kind != "importer":
+            parts.append("imports: " + ", ".join(imports))
+        elif imports and kind != "importer":
+            parts.append(str(len(imports)) + " imports")
+        lines.append("- " + " \u00b7 ".join(parts))
+    lines.append("Verify before reading. `/find <symbol>` \u00b7 `/deps <file>` for more. Disable: CONTEXT_OS_AUTOCONTEXT=0.")
+    lines.append("</context-os:autocontext>")
+    return "\n".join(lines)
+
+
+def main():
+    if os.environ.get("CONTEXT_OS_AUTOCONTEXT") == "0":
+        return 0
+    try:
+        min_word = int(os.environ.get("CONTEXT_OS_AUTOCONTEXT_MIN_WORD","4"))
+        max_hits = int(os.environ.get("CONTEXT_OS_AUTOCONTEXT_MAX","5"))
+        min_prompt = int(os.environ.get("CONTEXT_OS_AUTOCONTEXT_MIN_PROMPT","15"))
+    except ValueError:
+        return 0
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        return 0
+    prompt = (event.get("prompt") or "").strip()
+    if len(prompt) < min_prompt:
+        return 0
+    low = prompt.lower()
+    if low in {"continue","ok","yes","no","go","fix it","do it","run it",
+               "try again","retry","next","what","why"}:
+        return 0
+    cwd = event.get("cwd") or os.getcwd()
+    graph = load_graph(cwd)
+    if not graph:
+        return 0
+    hits = rank(prompt, graph, max_hits, min_word)
+    block = format_block(hits, graph)
+    if block:
+        sys.stdout.write(block + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_AUTOCTX_EOF
+chmod +x "$HOOK_DIR/auto_context.py"
+
+# --- prewarm.py (SessionStart: session intelligence brief) -----------
+cat > "$HOOK_DIR/prewarm.py" <<'CONTEXT_OS_PREWARM_EOF'
+#!/usr/bin/env python3
+"""
+prewarm.py - Context OS SessionStart hook.
+
+Emits a compact "session intelligence brief" on session start:
+  1. Handoff packet reminder (if .context-os/handoff.md exists)
+  2. Git state: branch, uncommitted, ahead/behind main
+  3. Top-3 hot files (90d) from the repo graph
+  4. Last session's notable issues (from .context-os/session-reports/)
+
+Prepended to session context by Claude Code so Turn 1 starts informed.
+
+Env: CONTEXT_OS_PREWARM=0 to disable. Fail-open on any error.
+"""
+import glob
+import json
+import os
+import subprocess
+import sys
+
+
+def git(cmd, cwd):
+    try:
+        return subprocess.check_output(
+            ["git","-C",cwd]+cmd, stderr=subprocess.DEVNULL,
+            text=True, timeout=3).strip()
+    except Exception:
+        return ""
+
+
+def git_state(cwd):
+    if not os.path.isdir(os.path.join(cwd, ".git")):
+        return None
+    branch = git(["rev-parse","--abbrev-ref","HEAD"], cwd) or "detached"
+    porcelain = git(["status","--porcelain"], cwd)
+    dirty = len([l for l in porcelain.splitlines() if l.strip()])
+    ahead = behind = 0
+    base = None
+    for b in ("main","master"):
+        if git(["rev-parse","--verify","--quiet",b], cwd):
+            base = b
+            break
+    if base and branch != base:
+        rv = git(["rev-list","--left-right","--count",base+"...HEAD"], cwd)
+        parts = rv.split()
+        if len(parts) == 2:
+            try:
+                behind, ahead = int(parts[0]), int(parts[1])
+            except ValueError:
+                pass
+    return {"branch":branch,"dirty":dirty,"base":base,
+            "ahead":ahead,"behind":behind}
+
+
+def graph_hot(cwd, n=3):
+    try:
+        g = json.load(open(os.path.join(cwd,".context-os","repo-graph.json")))
+    except Exception:
+        return []
+    return (g.get("hot_files") or [])[:n]
+
+
+def last_session_notes(cwd):
+    pattern = os.path.join(cwd,".context-os","session-reports","*.md")
+    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    if not files:
+        return []
+    try:
+        content = open(files[0], "r", encoding="utf-8", errors="ignore").read()
+    except Exception:
+        return []
+    notable = []
+    for kw in ("duplicate","loop","top file"):
+        for line in content.splitlines():
+            if kw in line.lower():
+                t = line.strip("-* ").strip()
+                if t and t not in notable:
+                    notable.append(t)
+                    break
+    return notable[:3]
+
+
+def handoff(cwd):
+    for c in (".context-os/handoff.md",".context-os/restart-packet.md"):
+        if os.path.isfile(os.path.join(cwd, c)):
+            return c
+    return None
+
+
+def main():
+    if os.environ.get("CONTEXT_OS_PREWARM") == "0":
+        return 0
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        event = {}
+    cwd = event.get("cwd") or os.getcwd()
+    sections = []
+
+    ho = handoff(cwd)
+    if ho:
+        sections.append("Handoff packet at `" + ho + "` \u2014 resume from there instead of re-planning.")
+
+    g = git_state(cwd)
+    if g:
+        parts = ["branch `"+g["branch"]+"`"]
+        if g["dirty"]:
+            parts.append(str(g["dirty"])+" uncommitted")
+        if g["base"] and g["ahead"]:
+            parts.append(str(g["ahead"])+" ahead of `"+g["base"]+"`")
+        if g["base"] and g["behind"]:
+            parts.append(str(g["behind"])+" behind `"+g["base"]+"`")
+        sections.append("Git: " + ", ".join(parts) + ".")
+
+    hot = graph_hot(cwd)
+    if hot:
+        bits = ["`"+h["path"]+"` ("+str(h["touches"])+")" for h in hot]
+        sections.append("Hot (90d): " + ", ".join(bits) + ".")
+
+    notes = last_session_notes(cwd)
+    if notes:
+        sections.append("Last session: " + "; ".join(notes) + ".")
+
+    if not sections:
+        return 0
+    out = ["<context-os:prewarm>"] + sections + ["Disable: CONTEXT_OS_PREWARM=0.","</context-os:prewarm>"]
+    sys.stdout.write("\n".join(out) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_PREWARM_EOF
+chmod +x "$HOOK_DIR/prewarm.py"
+
 # Merge Python hooks into settings.local.json. Additive merge — preserves any
 # existing hooks (e.g. from the optional binary-based step below).
 PY_ABS="$(cd "$HOOK_DIR" && pwd)"
@@ -1716,6 +2082,12 @@ PYTHON_HOOKS=$(cat <<HOOKJSON
       {"matcher": "Read|Glob|Grep", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/dedup_guard.py'", "timeout": 3}]},
       {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/loop_guard.py'", "timeout": 3}]},
       {"matcher": "Read", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/file_size_guard.py'", "timeout": 3}]}
+    ],
+    "UserPromptSubmit": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/auto_context.py'", "timeout": 3}]}
+    ],
+    "SessionStart": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/prewarm.py'", "timeout": 3}]}
     ],
     "Stop": [
       {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/session_profile.py'", "timeout": 15}]}
@@ -1742,10 +2114,10 @@ for event, entries in new_hooks.items():
             existing['hooks'][event].append(entry)
             seen.add(sig)
 json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
-" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 4 Python hooks (dedup, loop-guard, size-guard, profiler)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
+" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 6 Python hooks (dedup, loop, size, profiler, autocontext, prewarm)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
 else
   printf '%s' "$PYTHON_HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$PYTHON_HOOKS" > "$SETTINGS_LOCAL"
-  echo "  [$STEP/$TOTAL] installed 4 Python hooks (dedup, loop-guard, size-guard, profiler)"
+  echo "  [$STEP/$TOTAL] installed 6 Python hooks (dedup, loop, size, profiler, autocontext, prewarm)"
 fi
 
 # ============================================================================
@@ -1868,10 +2240,12 @@ printf "  ✓ %-22s %s\n" "prompt caching 1h" "5min→1hr TTL (huge on long sess
 printf "  ✓ %-22s %s\n" "traffic control" "non-essential API calls disabled"
 printf "  ✓ %-22s %s\n" "context cap" "150K max (prevents runaway sessions)"
 printf "  ✓ %-22s %s\n" "allowed tools" "15 pre-approved (zero confirmation prompts)"
-printf "  ✓ %-22s %s\n" "slash commands" "/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant"
+printf "  ✓ %-22s %s\n" "slash commands" "10 total (incl. /find /deps /hot /relevant /insights)"
 printf "  ✓ %-22s %s\n" "haiku subagent" "/explorer for cheap exploration"
 printf "  ✓ %-22s %s\n" "secret filtering" ".env, *.pem, credentials blocked"
 printf "  ✓ %-22s %s\n" "repo graph" "symbols + imports + hot files (.context-os/repo-graph.json)"
+printf "  ✓ %-22s %s\n" "auto-context" "graph-RAG injected on every UserPromptSubmit"
+printf "  ✓ %-22s %s\n" "prewarm" "session brief: git + hot files + last-session flags"
 printf "  ✓ %-22s %s\n" "dedup guard" "blocks duplicate Read/Glob/Grep within 10min"
 printf "  ✓ %-22s %s\n" "loop guard" "warns at 5 edits, blocks at 8 on same file"
 printf "  ✓ %-22s %s\n" "size guard" "blocks Read on files >1500 lines without offset"
