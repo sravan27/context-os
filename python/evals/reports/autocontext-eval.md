@@ -1,14 +1,14 @@
 # auto_context eval
 
-_Generated 2026-04-19T14:18:12+00:00 · K=3 · N=32 prompts across 3 fixtures_
+_Generated 2026-04-19T14:56:30+00:00 · K=3 · N=32 prompts across 3 fixtures_
 
 ## Aggregate (auto_context)
 
 | Metric | Value |
 |---|---|
-| Precision@3 | **0.583** |
-| Recall@3 | **0.578** |
-| MRR | **0.922** |
+| Precision@3 | **0.604** |
+| Recall@3 | **0.599** |
+| MRR | **0.938** |
 | Coverage (non-empty) | 1.000 |
 
 ## Baseline vs auto_context (lift)
@@ -19,8 +19,8 @@ Baseline = naive filename substring match. Ranks files purely by how many prompt
 |---|---|---|---|---|---|---|
 | python | 0.431 | 0.611 | **+0.181** | 0.583 | 0.958 | **+0.375** |
 | typescript | 0.550 | 0.600 | **+0.050** | 0.600 | 0.900 | **+0.300** |
-| rust | 0.500 | 0.533 | **+0.033** | 0.500 | 0.900 | **+0.400** |
-| **aggregate** | **0.490** | **0.583** | **+0.094** | **0.562** | **0.922** | **+0.359** |
+| rust | 0.500 | 0.600 | **+0.100** | 0.500 | 0.950 | **+0.450** |
+| **aggregate** | **0.490** | **0.604** | **+0.115** | **0.562** | **0.938** | **+0.375** |
 
 ## Per-fixture (auto_context)
 
@@ -28,7 +28,7 @@ Baseline = naive filename substring match. Ranks files purely by how many prompt
 |---|---|---|---|---|---|
 | python | 12 | 0.611 | 0.583 | 0.958 | 1.000 |
 | typescript | 10 | 0.600 | 0.533 | 0.900 | 1.000 |
-| rust | 10 | 0.533 | 0.617 | 0.900 | 1.000 |
+| rust | 10 | 0.600 | 0.683 | 0.950 | 1.000 |
 
 ## Per-prompt (auto_context)
 
@@ -71,11 +71,11 @@ Baseline = naive filename substring match. Ranks files purely by how many prompt
 | rs-login-rate-limit | 0.67 | 0.67 | 1.00 | `src/api/router.rs`, `src/auth/mod.rs`, `src/api/rate_limit.rs` |
 | rs-hash-password-lookup | 0.33 | 0.50 | 1.00 | `src/auth/login.rs`, `src/api/router.rs`, `src/auth/middleware.rs` |
 | rs-session-ttl | 0.33 | 0.50 | 1.00 | `src/config/settings.rs`, `src/auth/mod.rs`, `src/auth/login.rs` |
-| rs-find-user-async | 0.67 | 0.67 | 1.00 | `src/auth/login.rs`, `src/db/queries.rs`, `src/utils/mod.rs` |
-| rs-middleware-logging | 0.33 | 0.33 | 1.00 | `src/auth/middleware.rs`, `src/auth/mod.rs`, `src/lib.rs` |
+| rs-find-user-async | 1.00 | 1.00 | 1.00 | `src/auth/login.rs`, `src/db/queries.rs`, `src/config/database.rs` |
+| rs-middleware-logging | 0.67 | 0.67 | 1.00 | `src/auth/middleware.rs`, `src/utils/logging.rs`, `src/auth/mod.rs` |
 | rs-migrations-add-column | 1.00 | 0.50 | 1.00 | `src/db/migrations.rs` |
 | rs-router-logout | 0.33 | 0.50 | 1.00 | `src/api/router.rs`, `src/auth/mod.rs`, `src/auth/login.rs` |
-| rs-welcome-email | 0.33 | 0.50 | 0.50 | `src/utils/mod.rs`, `src/utils/email.rs`, `src/db/models.rs` |
+| rs-welcome-email | 0.33 | 0.50 | 1.00 | `src/utils/email.rs`, `src/utils/mod.rs`, `src/db/models.rs` |
 | rs-db-pool | 1.00 | 1.00 | 1.00 | `src/config/database.rs`, `src/db/migrations.rs`, `src/db/queries.rs` |
 | rs-settings-env | 0.33 | 1.00 | 0.50 | `src/auth/session.rs`, `src/config/settings.rs`, `src/lib.rs` |
 

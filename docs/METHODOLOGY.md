@@ -354,7 +354,32 @@ Per-fixture breakdown (auto_context): Python P@3 = 0.611, MRR = 0.958 · TypeScr
 
 **Where it falls short**: per-fixture P@3 is pulled down by "hub" files (`models.py` with `class Session`/`User`/`Token`, `mod.rs` re-export files). Case-insensitive symbol match hits them for many prompts, bumping them into top-3 alongside the actually-targeted source file. These are genuinely useful neighbors but strict P@3 against hand-labeled ground truth penalizes them — MRR is the more operationally relevant metric since what matters is "did the user read the right file on the first Read".
 
-**What's still estimated, not measured**: actual dollar savings on live Claude sessions. The 80.2% number is a simulation using real fixture file sizes, a documented Anthropic token-per-line heuristic, and a fixed Glob/Grep overhead. It is not a replacement for a live-session A/B with real transcripts (§9 lists that as the remaining gap).
+### 7.3.1 Live Claude A/B (v2.5.0) — real `claude --print` calls
+
+Source: `python/evals/reports/live-session-bench.md` (summary) and `python/evals/reports/live-session-bench-raw.json` (per-call raw usage). Runner: `python3 python/evals/runners/live_session_bench.py --runs 3`. Requires the `claude` CLI + authenticated session.
+
+**Protocol**: for each of 6 realistic developer prompts on `autocontext_fixture/`, invoke `claude --print --output-format json --model sonnet --permission-mode bypassPermissions` three times per arm, toggling the hook via `CONTEXT_OS_AUTOCONTEXT=0` (control) vs `=1` (treatment). Parse Claude Code's returned `usage` block; `total_tokens = input + cache_creation + cache_read + output`. Same fixture, same model, same cold cache per invocation — only variable is hook on/off.
+
+**Results (N=36 real Claude calls, $1.04 total cost)**:
+
+| Metric | Value |
+|---|---:|
+| Total control tokens | 306,368 |
+| Total treatment tokens | **181,093** |
+| **Aggregate savings** | **−40.9%** |
+| Median per-prompt savings | **−37.3%** |
+| Prompts where treatment < control | **6/6** |
+| Best case (p5 migrations-add-col) | **−66.9%** |
+| Worst case (p1 hash-password) | −14.1% |
+
+**What 40.9% means**: this is the real number — tokens billed by the Anthropic API, with Claude actually running Read/Glob/Grep. The 80.2% simulation in §7.3 is an upper-bound estimate; the live bench is ground truth. The gap (80% simulated → 41% live) is because real Claude pays cold-cache cost on the system prompt + tool schemas every `--print` call, so the auto_context block's relative contribution is diluted. On long interactive sessions where the first-turn cost amortizes, we'd expect the savings to move up the range toward the simulation.
+
+**All six prompts win**, including two "lookup only" prompts (p1, p2) where the single-run A/B in an earlier trial showed variance-driven regressions. With `--runs 3` averaging, the signal stabilizes.
+
+**What's still not measured**:
+- Multi-turn interactive sessions (>20 turns).
+- Large real repos (>10k files).
+- Long-tail prompt diversity (6 prompts is a starting sample).
 
 ### 7.4 End-to-end benchmark
 

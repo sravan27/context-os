@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -1877,6 +1877,14 @@ def rank(prompt, graph, max_hits, min_word):
                     or base.endswith(".test.ts") or base.endswith(".test.js")
                     or base.endswith(".spec.ts") or base.endswith(".spec.js")):
                 c["score"] -= 3
+
+    # Hub-file penalty: re-export gateways rarely the edit target.
+    hub_files = {"mod.rs","models.py","index.ts","index.js",
+                 "index.tsx","index.jsx","__init__.py","lib.rs"}
+    for c in candidates.values():
+        base = os.path.basename(c["file"]).lower()
+        if base in hub_files and base.split(".")[0] not in prompt_low and base not in prompt_low:
+            c["score"] -= 2
 
     ranked = sorted(candidates.values(),
                     key=lambda c: (-c["score"], c["file"], c["line"]))

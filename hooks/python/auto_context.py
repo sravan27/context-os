@@ -187,6 +187,24 @@ def rank(prompt, graph, max_hits, min_word):
                 c["score"] -= 3
                 c["reasons"].append("test-file penalty")
 
+    # 6. Hub-file penalty — re-export / gateway files (mod.rs, models.py,
+    # __init__.py, index.ts) often host many symbols and get matched on
+    # broad prompt tokens, bumping them above the real edit target. Only
+    # penalize when the filename itself isn't named in the prompt.
+    hub_files = {"mod.rs", "models.py", "index.ts", "index.js",
+                 "index.tsx", "index.jsx", "__init__.py", "lib.rs"}
+    for key, c in candidates.items():
+        base = os.path.basename(c["file"]).lower()
+        if base in hub_files:
+            mentioned = any(
+                base.split(".")[0] in prompt_low
+                or base in prompt_low
+                for _ in [0]
+            )
+            if not mentioned:
+                c["score"] -= 2
+                c["reasons"].append("hub-file penalty")
+
     ranked = sorted(candidates.values(),
                     key=lambda c: (-c["score"], c["file"], c["line"]))
     # Dedupe: keep at most 2 hits per file

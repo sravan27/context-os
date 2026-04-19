@@ -1,6 +1,6 @@
 # Session-replay token savings
 
-_Generated 2026-04-19T14:18:13+00:00 · N=32 prompts across 3 fixtures_
+_Generated 2026-04-19T14:56:31+00:00 · N=32 prompts across 3 fixtures_
 
 ## What this measures
 
@@ -23,14 +23,14 @@ Tokens Claude would burn on the "find + read" portion of each task, with vs with
 | Metric | Value |
 |---|---|
 | Total tokens (without) | **34,944** |
-| Total tokens (with auto_context) | **6,932** |
-| Total savings | **28,012 tok (80.2%)** |
+| Total tokens (with auto_context) | **6,908** |
+| Total savings | **28,036 tok (80.2%)** |
 | Median tokens (without) | 876 |
-| Median tokens (with) | 220 |
+| Median tokens (with) | 210 |
 | Median savings per prompt | **78.0%** |
 | Mean auto_context block cost | 56 tok |
 | Prompts where with < without | **32/32** |
-| Prompts answered on first read (with) | **27/32** |
+| Prompts answered on first read (with) | **28/32** |
 
 ## Per-prompt
 
@@ -65,7 +65,7 @@ Tokens Claude would burn on the "find + read" portion of each task, with vs with
 | rust | rs-middleware-logging | 812 (1) | 179 (1) | **+633 (+78.0%)** |
 | rust | rs-migrations-add-column | 940 (5) | 123 (1) | **+817 (+86.9%)** |
 | rust | rs-router-logout | 868 (1) | 235 (1) | **+633 (+72.9%)** |
-| rust | rs-welcome-email | 844 (1) | 222 (2) | **+622 (+73.7%)** |
+| rust | rs-welcome-email | 844 (1) | 198 (1) | **+646 (+76.5%)** |
 | rust | rs-db-pool | 1,428 (10) | 150 (1) | **+1,278 (+89.5%)** |
 | rust | rs-settings-env | 2,508 (19) | 373 (2) | **+2,135 (+85.1%)** |
 

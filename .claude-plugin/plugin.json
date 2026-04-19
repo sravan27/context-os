@@ -1,7 +1,7 @@
 {
   "name": "context-os",
-  "description": "Context optimization layer for Claude Code. Static-analysis RAG via UserPromptSubmit hook (no embeddings, no server) — Claude's first turn starts with file:line candidates from a pre-built repo graph. Measured across 32 prompts on Python/TypeScript/Rust fixtures: MRR 0.922, +0.359 over filename-only baseline; deterministic session-replay shows 80% fewer tokens to first relevant file. Eleven slash commands (five query the graph), six zero-dep Python hooks (auto_context, prewarm with background graph autobuild, dedup, loop, file-size, session-profile), noise filtering, prompt caching, response shaping. 28 techniques, one installer.",
-  "version": "2.4.0",
+  "description": "Context optimization layer for Claude Code. Static-analysis RAG via UserPromptSubmit hook — Claude's first turn starts with file:line candidates from a pre-built repo graph (no embeddings, no server). Live `claude --print` A/B on 36 real calls: −40.9% aggregate tokens, 6/6 wins. Offline across 3 languages: MRR 0.938, +0.375 lift over filename-only baseline. Eleven slash commands (five query the graph), six Python hooks (auto_context, prewarm + graph autobuild, dedup, loop, file-size, session-profile), noise filtering, prompt caching, response shaping. 28 techniques, one installer.",
+  "version": "2.5.0",
   "author": {
     "name": "sravan27",
     "url": "https://github.com/sravan27"
