@@ -1,117 +1,324 @@
 {
-  "description": "Hand-labeled prompts for evaluating auto_context.py precision/recall. Each prompt maps to the top-3 files a competent engineer would open first to work on that task. expected_files is ordered by relevance — the most-likely-first-open is index 0.",
-  "fixture_root": "python/evals/autocontext_fixture",
-  "prompts": [
+  "description": "Hand-labeled prompts for evaluating auto_context.py precision/recall across Python, TypeScript, and Rust fixtures. Each prompt maps to the top files a competent engineer would open first to work on that task. expected_files is ordered by relevance.",
+  "fixtures": [
     {
-      "id": "login-rate-limit",
-      "prompt": "add rate limiting to the login endpoint so users can't brute force passwords",
-      "expected_files": [
-        "src/api/rate_limit.py",
-        "src/auth/login.py",
-        "src/api/router.py"
-      ],
-      "notes": "rate_limit_decorator already wraps handle_login in router.py; user wants tighter limit on /login"
+      "id": "python",
+      "root": "python/evals/autocontext_fixture"
     },
     {
-      "id": "hash-password-lookup",
-      "prompt": "where is hash_password defined and which files call it",
-      "expected_files": [
-        "src/utils/crypto.py",
-        "src/auth/login.py"
-      ],
-      "notes": "hash_password lives in crypto.py; login.py uses verify_password from same module"
+      "id": "typescript",
+      "root": "python/evals/autocontext_fixture_js"
     },
     {
-      "id": "session-ttl-config",
-      "prompt": "make the session TTL configurable per environment via the Settings class",
-      "expected_files": [
-        "src/config/settings.py",
-        "src/auth/session.py"
-      ],
-      "notes": "Settings.session_ttl lives in settings.py; create_session reads it"
-    },
-    {
-      "id": "queries-async",
-      "prompt": "refactor find_user_by_email to use async database queries",
-      "expected_files": [
-        "src/db/queries.py",
-        "src/auth/login.py",
-        "src/config/database.py"
-      ],
-      "notes": "find_user_by_email lives in queries.py, called from login.py, uses get_db_connection"
-    },
-    {
-      "id": "middleware-logging",
-      "prompt": "auth_middleware should log the user_id not just warn on unauth",
-      "expected_files": [
-        "src/auth/middleware.py",
-        "src/utils/logging.py",
-        "src/auth/session.py"
-      ],
-      "notes": "middleware.py calls setup_logger and SessionManager.get"
-    },
-    {
-      "id": "migrations-add-column",
-      "prompt": "add a created_at column to the users table via a new migration",
-      "expected_files": [
-        "src/db/migrations.py",
-        "src/db/models.py"
-      ],
-      "notes": "MIGRATIONS list in migrations.py; User model in models.py"
-    },
-    {
-      "id": "router-new-endpoint",
-      "prompt": "register a /logout endpoint on APIRouter that invalidates the session",
-      "expected_files": [
-        "src/api/router.py",
-        "src/auth/session.py"
-      ],
-      "notes": "APIRouter.add in router.py; SessionManager.invalidate in session.py"
-    },
-    {
-      "id": "email-on-signup",
-      "prompt": "send a welcome email via EmailClient when a new user signs up",
-      "expected_files": [
-        "src/utils/email.py",
-        "src/auth/login.py"
-      ],
-      "notes": "send_email + EmailClient in email.py; signup-like flow lives near login.py"
-    },
-    {
-      "id": "db-connection-pool",
-      "prompt": "convert get_db_connection to use a connection pool and close idle conns",
-      "expected_files": [
-        "src/config/database.py",
-        "src/db/queries.py",
-        "src/db/migrations.py"
-      ],
-      "notes": "get_db_connection + close_connection in database.py; callers in queries.py + migrations.py"
-    },
-    {
-      "id": "rate-limit-config",
-      "prompt": "expose RATE_LIMIT_CONFIG through the Settings object instead of a module constant",
-      "expected_files": [
-        "src/api/rate_limit.py",
-        "src/config/settings.py"
-      ],
-      "notes": "RATE_LIMIT_CONFIG lives in rate_limit.py; Settings class in settings.py"
-    },
-    {
-      "id": "verify-password-bug",
-      "prompt": "verify_password returns True for empty string on malformed stored hash",
-      "expected_files": [
-        "src/utils/crypto.py",
-        "src/auth/login.py"
-      ],
-      "notes": "verify_password is in crypto.py; only caller is login.py validate_credentials"
-    },
-    {
-      "id": "settings-env-var",
-      "prompt": "load_config should also read from process environment if .env missing",
-      "expected_files": [
-        "src/config/settings.py"
-      ],
-      "notes": "load_config lives solely in settings.py"
+      "id": "rust",
+      "root": "python/evals/autocontext_fixture_rust"
     }
-  ]
+  ],
+  "prompts": {
+    "python": [
+      {
+        "id": "login-rate-limit",
+        "prompt": "add rate limiting to the login endpoint so users can't brute force passwords",
+        "expected_files": [
+          "src/api/rate_limit.py",
+          "src/auth/login.py",
+          "src/api/router.py"
+        ],
+        "notes": "rate_limit_decorator already wraps handle_login in router.py; user wants tighter limit on /login"
+      },
+      {
+        "id": "hash-password-lookup",
+        "prompt": "where is hash_password defined and which files call it",
+        "expected_files": [
+          "src/utils/crypto.py",
+          "src/auth/login.py"
+        ],
+        "notes": "hash_password lives in crypto.py; login.py uses verify_password from same module"
+      },
+      {
+        "id": "session-ttl-config",
+        "prompt": "make the session TTL configurable per environment via the Settings class",
+        "expected_files": [
+          "src/config/settings.py",
+          "src/auth/session.py"
+        ],
+        "notes": "Settings.session_ttl lives in settings.py; create_session reads it"
+      },
+      {
+        "id": "queries-async",
+        "prompt": "refactor find_user_by_email to use async database queries",
+        "expected_files": [
+          "src/db/queries.py",
+          "src/auth/login.py",
+          "src/config/database.py"
+        ],
+        "notes": "find_user_by_email lives in queries.py, called from login.py, uses get_db_connection"
+      },
+      {
+        "id": "middleware-logging",
+        "prompt": "auth_middleware should log the user_id not just warn on unauth",
+        "expected_files": [
+          "src/auth/middleware.py",
+          "src/utils/logging.py",
+          "src/auth/session.py"
+        ],
+        "notes": "middleware.py calls setup_logger and SessionManager.get"
+      },
+      {
+        "id": "migrations-add-column",
+        "prompt": "add a created_at column to the users table via a new migration",
+        "expected_files": [
+          "src/db/migrations.py",
+          "src/db/models.py"
+        ],
+        "notes": "MIGRATIONS list in migrations.py; User model in models.py"
+      },
+      {
+        "id": "router-new-endpoint",
+        "prompt": "register a /logout endpoint on APIRouter that invalidates the session",
+        "expected_files": [
+          "src/api/router.py",
+          "src/auth/session.py"
+        ],
+        "notes": "APIRouter.add in router.py; SessionManager.invalidate in session.py"
+      },
+      {
+        "id": "email-on-signup",
+        "prompt": "send a welcome email via EmailClient when a new user signs up",
+        "expected_files": [
+          "src/utils/email.py",
+          "src/auth/login.py"
+        ],
+        "notes": "send_email + EmailClient in email.py; signup-like flow lives near login.py"
+      },
+      {
+        "id": "db-connection-pool",
+        "prompt": "convert get_db_connection to use a connection pool and close idle conns",
+        "expected_files": [
+          "src/config/database.py",
+          "src/db/queries.py",
+          "src/db/migrations.py"
+        ],
+        "notes": "get_db_connection + close_connection in database.py; callers in queries.py + migrations.py"
+      },
+      {
+        "id": "rate-limit-config",
+        "prompt": "expose RATE_LIMIT_CONFIG through the Settings object instead of a module constant",
+        "expected_files": [
+          "src/api/rate_limit.py",
+          "src/config/settings.py"
+        ],
+        "notes": "RATE_LIMIT_CONFIG lives in rate_limit.py; Settings class in settings.py"
+      },
+      {
+        "id": "verify-password-bug",
+        "prompt": "verify_password returns True for empty string on malformed stored hash",
+        "expected_files": [
+          "src/utils/crypto.py",
+          "src/auth/login.py"
+        ],
+        "notes": "verify_password is in crypto.py; only caller is login.py validate_credentials"
+      },
+      {
+        "id": "settings-env-var",
+        "prompt": "load_config should also read from process environment if .env missing",
+        "expected_files": [
+          "src/config/settings.py"
+        ],
+        "notes": "load_config lives solely in settings.py"
+      }
+    ],
+    "typescript": [
+      {
+        "id": "ts-login-rate-limit",
+        "prompt": "add rate limiting to the login handler to block brute force",
+        "expected_files": [
+          "src/api/rateLimit.ts",
+          "src/auth/login.ts",
+          "src/server/router.ts"
+        ],
+        "notes": "rateLimit decorator in rateLimit.ts; handleLogin in login.ts; router wires both"
+      },
+      {
+        "id": "ts-hash-password-lookup",
+        "prompt": "where is hashPassword defined and which files call it",
+        "expected_files": [
+          "src/utils/crypto.ts",
+          "src/auth/login.ts"
+        ],
+        "notes": "hashPassword lives in crypto.ts; login.ts is the caller"
+      },
+      {
+        "id": "ts-session-ttl",
+        "prompt": "make session TTL configurable via loadConfig so it varies per environment",
+        "expected_files": [
+          "src/config/settings.ts",
+          "src/auth/session.ts"
+        ],
+        "notes": "Settings interface + loadConfig in settings.ts; SessionManager reads it"
+      },
+      {
+        "id": "ts-find-user-async",
+        "prompt": "refactor findUserByEmail to return a Promise and batch connection reuse",
+        "expected_files": [
+          "src/db/users.ts",
+          "src/auth/login.ts",
+          "src/config/database.ts"
+        ],
+        "notes": "findUserByEmail in users.ts, called from login.ts, needs getDbConnection"
+      },
+      {
+        "id": "ts-middleware-logging",
+        "prompt": "authMiddleware should log unauthorized user ids via the logger util",
+        "expected_files": [
+          "src/auth/middleware.ts",
+          "src/utils/logging.ts",
+          "src/auth/session.ts"
+        ],
+        "notes": "middleware.ts uses logger and SessionManager"
+      },
+      {
+        "id": "ts-migrations-add-column",
+        "prompt": "add a created_at column to users via a new migration",
+        "expected_files": [
+          "src/db/migrations.ts",
+          "src/db/users.ts"
+        ],
+        "notes": "MIGRATIONS array in migrations.ts; User interface in users.ts"
+      },
+      {
+        "id": "ts-router-logout",
+        "prompt": "register a /logout route on the router that invalidates the session",
+        "expected_files": [
+          "src/server/router.ts",
+          "src/auth/session.ts"
+        ],
+        "notes": "createRouter in router.ts; SessionManager.invalidate in session.ts"
+      },
+      {
+        "id": "ts-welcome-email",
+        "prompt": "send a welcome email via EmailClient when a new user signs up",
+        "expected_files": [
+          "src/utils/email.ts",
+          "src/auth/login.ts"
+        ],
+        "notes": "sendEmail + EmailClient in email.ts; signup-like flow lives in login.ts"
+      },
+      {
+        "id": "ts-db-pool",
+        "prompt": "convert getDbConnection to a pooled connection with closeConnection called on idle",
+        "expected_files": [
+          "src/config/database.ts",
+          "src/db/users.ts",
+          "src/db/migrations.ts"
+        ],
+        "notes": "getDbConnection + closeConnection in database.ts; callers in users.ts + migrations.ts"
+      },
+      {
+        "id": "ts-app-bootstrap",
+        "prompt": "the createApp bootstrap should load config before wiring the router",
+        "expected_files": [
+          "src/server/app.ts",
+          "src/config/settings.ts",
+          "src/server/router.ts"
+        ],
+        "notes": "createApp in app.ts wires router + config"
+      }
+    ],
+    "rust": [
+      {
+        "id": "rs-login-rate-limit",
+        "prompt": "add a tighter rate limit on the login endpoint to block brute force",
+        "expected_files": [
+          "src/api/rate_limit.rs",
+          "src/auth/login.rs",
+          "src/api/router.rs"
+        ],
+        "notes": "RateLimiter in rate_limit.rs; handle_login in login.rs; Router wires both"
+      },
+      {
+        "id": "rs-hash-password-lookup",
+        "prompt": "where is hash_password defined in the crate and who calls it",
+        "expected_files": [
+          "src/utils/crypto.rs",
+          "src/auth/login.rs"
+        ],
+        "notes": "hash_password lives in crypto.rs; login.rs is the caller"
+      },
+      {
+        "id": "rs-session-ttl",
+        "prompt": "make the session TTL configurable per environment via the Settings struct",
+        "expected_files": [
+          "src/config/settings.rs",
+          "src/auth/session.rs"
+        ],
+        "notes": "Settings struct in settings.rs; session.rs reads it"
+      },
+      {
+        "id": "rs-find-user-async",
+        "prompt": "refactor find_user_by_email to async and use the pooled connection",
+        "expected_files": [
+          "src/db/queries.rs",
+          "src/auth/login.rs",
+          "src/config/database.rs"
+        ],
+        "notes": "find_user_by_email in queries.rs, called by login.rs, uses get_db_connection"
+      },
+      {
+        "id": "rs-middleware-logging",
+        "prompt": "auth_middleware should log the user id via log_warn when unauth",
+        "expected_files": [
+          "src/auth/middleware.rs",
+          "src/utils/logging.rs",
+          "src/auth/session.rs"
+        ],
+        "notes": "middleware.rs uses logging fns and SessionManager"
+      },
+      {
+        "id": "rs-migrations-add-column",
+        "prompt": "add a created_at column to users via a new migration entry",
+        "expected_files": [
+          "src/db/migrations.rs",
+          "src/db/models.rs"
+        ],
+        "notes": "MIGRATIONS const in migrations.rs; User struct in models.rs"
+      },
+      {
+        "id": "rs-router-logout",
+        "prompt": "register a /logout route on Router that invalidates the session",
+        "expected_files": [
+          "src/api/router.rs",
+          "src/auth/session.rs"
+        ],
+        "notes": "Router in router.rs; SessionManager::invalidate in session.rs"
+      },
+      {
+        "id": "rs-welcome-email",
+        "prompt": "send a welcome email via EmailClient when a new user signs up",
+        "expected_files": [
+          "src/utils/email.rs",
+          "src/auth/login.rs"
+        ],
+        "notes": "send_email + EmailClient in email.rs; signup-like flow lives in login.rs"
+      },
+      {
+        "id": "rs-db-pool",
+        "prompt": "convert get_db_connection to a pooled Connection and drop idle conns",
+        "expected_files": [
+          "src/config/database.rs",
+          "src/db/queries.rs",
+          "src/db/migrations.rs"
+        ],
+        "notes": "Connection + get_db_connection in database.rs; callers in queries.rs + migrations.rs"
+      },
+      {
+        "id": "rs-settings-env",
+        "prompt": "load_config should also read from std::env when the dotenv file is missing",
+        "expected_files": [
+          "src/config/settings.rs"
+        ],
+        "notes": "load_config lives solely in settings.rs"
+      }
+    ]
+  }
 }

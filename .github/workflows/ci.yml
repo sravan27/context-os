@@ -39,19 +39,26 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 python/evals/runners/safe_mode_runner.py
 
-      - name: auto_context precision/recall eval
+      - name: auto_context eval (3 fixtures, baseline lift)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          python3 python/evals/runners/autocontext_eval.py
-          # Publish the report as an artifact for historical tracking
+          python3 python/evals/runners/autocontext_eval.py --baseline naive-filename
           test -f python/evals/reports/autocontext-eval.md
 
-      - name: Upload autocontext eval report
+      - name: Session-replay token-savings simulation
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/session_replay.py
+          test -f python/evals/reports/session-replay.md
+
+      - name: Upload eval reports
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: autocontext-eval-report
-          path: python/evals/reports/autocontext-eval.md
+          name: autocontext-eval-reports
+          path: |
+            python/evals/reports/autocontext-eval.md
+            python/evals/reports/session-replay.md
           retention-days: 30
 
   setup-sh:
