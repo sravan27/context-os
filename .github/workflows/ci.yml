@@ -160,13 +160,16 @@ jobs:
           rc=$?
           set -e
           test "$rc" = "0" || { echo "FAIL: file_size_guard should allow with offset, got $rc"; exit 1; }
+          # Seed a source file so the graph has matchable symbols, then rebuild.
+          printf 'def myHelperFunction():\n    return 1\n\nclass MyTestClass:\n    pass\n' > src/seed.py
+          python3 .context-os/build_repo_graph.py .
           # auto_context: short prompt -> no output; prompt with symbol -> injected block
           short_out=$(echo '{"prompt":"ok","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/auto_context.py)
           test -z "$short_out" || { echo "FAIL: auto_context should be silent on short prompt, got: $short_out"; exit 1; }
-          long_out=$(echo '{"prompt":"please help me refactor the dedup_guard hook and the loop_guard logic","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/auto_context.py)
-          echo "$long_out" | grep -q "context-os:autocontext" || { echo "FAIL: auto_context should emit block on keyword match. output: $long_out"; exit 1; }
+          long_out=$(echo '{"prompt":"please help me refactor the myHelperFunction and MyTestClass logic","cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/auto_context.py)
+          echo "$long_out" | grep -q "context-os:autocontext" || { echo "FAIL: auto_context should emit block on keyword match. output: $long_out"; cat .context-os/repo-graph.json | python3 -m json.tool | head -40; exit 1; }
           # auto_context: disabled via env
-          disabled=$(CONTEXT_OS_AUTOCONTEXT=0 echo '{"prompt":"please help me refactor the dedup_guard hook","cwd":"'"$(pwd)"'"}' | CONTEXT_OS_AUTOCONTEXT=0 python3 .claude/hooks/auto_context.py)
+          disabled=$(echo '{"prompt":"please help me refactor the myHelperFunction","cwd":"'"$(pwd)"'"}' | CONTEXT_OS_AUTOCONTEXT=0 python3 .claude/hooks/auto_context.py)
           test -z "$disabled" || { echo "FAIL: auto_context should be silent when disabled, got: $disabled"; exit 1; }
           # prewarm: emits git + hot files on a git-initialized cwd
           prewarm_out=$(echo '{"cwd":"'"$(pwd)"'"}' | python3 .claude/hooks/prewarm.py)
