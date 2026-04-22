@@ -51,6 +51,36 @@ jobs:
           python3 python/evals/runners/session_replay.py
           test -f python/evals/reports/session-replay.md
 
+      - name: Ranker ablation study (8 signals)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/autocontext_ablation.py
+          test -f python/evals/reports/autocontext-ablation.md
+
+      - name: Hook robustness test suite (18 cases)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/robustness_test.py
+          test -f python/evals/reports/robustness.md
+
+      - name: Hook latency SLA (10..5000 files)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/latency_bench.py --sizes 10,100,1000,5000
+          test -f python/evals/reports/latency-bench.md
+
+      - name: Retrieval-baselines comparison (BM25 / grep / naive / random)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/baseline_comparison.py
+          test -f python/evals/reports/baseline-comparison.md
+
+      - name: Dogfood eval on this repo (real, heterogeneous codebase)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 python/evals/runners/dogfood_eval.py
+          test -f python/evals/reports/dogfood-eval.md
+
       - name: Upload eval reports
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
@@ -59,6 +89,11 @@ jobs:
           path: |
             python/evals/reports/autocontext-eval.md
             python/evals/reports/session-replay.md
+            python/evals/reports/autocontext-ablation.md
+            python/evals/reports/robustness.md
+            python/evals/reports/latency-bench.md
+            python/evals/reports/baseline-comparison.md
+            python/evals/reports/dogfood-eval.md
           retention-days: 30
 
   setup-sh:

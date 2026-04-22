@@ -1,0 +1,117 @@
+{
+  "description": "Hand-labeled prompts evaluated against the Context-OS repo itself (dogfood). Realistic developer questions about our own source code, with expected_files curated by the author who wrote the code. Tests auto_context on a real multi-language repo (Python + Rust + shell + TypeScript) of ~50 source files after excluding test fixtures.",
+  "repo_root": ".",
+  "prompts": [
+    {
+      "id": "ranker-scoring-logic",
+      "prompt": "where is the scoring logic for auto_context, the part that assigns points to symbol and path matches?",
+      "expected_files": [
+        "hooks/python/auto_context.py"
+      ],
+      "notes": "The `rank()` function and bump() helper live here."
+    },
+    {
+      "id": "hub-file-penalty",
+      "prompt": "find the hub-file penalty that down-weights mod.rs and __init__.py when they are not named in the prompt",
+      "expected_files": [
+        "hooks/python/auto_context.py"
+      ],
+      "notes": "Hook has the rank() signal. setup.sh has an embedded copy but is shell not python."
+    },
+    {
+      "id": "build-repo-graph",
+      "prompt": "where is the repo graph builder that parses imports and symbols?",
+      "expected_files": [
+        "hooks/python/build_repo_graph.py"
+      ],
+      "notes": "Writes .context-os/repo-graph.json."
+    },
+    {
+      "id": "live-session-bench",
+      "prompt": "how do I run a real claude --print A/B benchmark with auto_context toggled on and off?",
+      "expected_files": [
+        "python/evals/runners/live_session_bench.py"
+      ],
+      "notes": "Invokes `claude --print` with CONTEXT_OS_AUTOCONTEXT=0/1."
+    },
+    {
+      "id": "session-replay-simulator",
+      "prompt": "find the deterministic token-savings simulator that doesn't call the claude API",
+      "expected_files": [
+        "python/evals/runners/session_replay.py"
+      ],
+      "notes": "Pure-stdlib replay using per-file line counts."
+    },
+    {
+      "id": "autocontext-eval-pipeline",
+      "prompt": "where is the offline precision recall MRR evaluation pipeline for auto_context?",
+      "expected_files": [
+        "python/evals/runners/autocontext_eval.py"
+      ],
+      "notes": "Iterates fixtures, supports baselines, writes autocontext-eval.md."
+    },
+    {
+      "id": "dedup-guard",
+      "prompt": "find the hook that blocks duplicate Read Glob Grep calls within 10 minutes",
+      "expected_files": [
+        "hooks/python/dedup_guard.py"
+      ]
+    },
+    {
+      "id": "loop-guard",
+      "prompt": "how does the loop guard warn at 5 edits and block at 8 edits on the same file?",
+      "expected_files": [
+        "hooks/python/loop_guard.py"
+      ]
+    },
+    {
+      "id": "prewarm-session-start",
+      "prompt": "where is the SessionStart prewarm hook that prints the git status and hot files brief?",
+      "expected_files": [
+        "hooks/python/prewarm.py"
+      ]
+    },
+    {
+      "id": "file-size-guard",
+      "prompt": "find the hook that blocks reading enormous files",
+      "expected_files": [
+        "hooks/python/file_size_guard.py"
+      ]
+    },
+    {
+      "id": "ablation-study",
+      "prompt": "find the ranker signal ablation study runner",
+      "expected_files": [
+        "python/evals/runners/autocontext_ablation.py"
+      ]
+    },
+    {
+      "id": "baseline-comparison",
+      "prompt": "where is the BM25 baseline comparison runner?",
+      "expected_files": [
+        "python/evals/runners/baseline_comparison.py"
+      ]
+    },
+    {
+      "id": "latency-bench",
+      "prompt": "where is the hook latency benchmark across repo sizes?",
+      "expected_files": [
+        "python/evals/runners/latency_bench.py"
+      ]
+    },
+    {
+      "id": "robustness-tests",
+      "prompt": "find the adversarial robustness test suite for auto_context",
+      "expected_files": [
+        "python/evals/runners/robustness_test.py"
+      ]
+    },
+    {
+      "id": "live-bench-stats",
+      "prompt": "where is the statistical analysis that computes bootstrap and wilson CIs on the live bench?",
+      "expected_files": [
+        "python/evals/runners/live_bench_stats.py"
+      ]
+    }
+  ]
+}

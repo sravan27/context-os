@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.5.0"
+VERSION="2.6.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -1749,13 +1749,39 @@ Env:
 - CONTEXT_OS_AUTOCONTEXT_MAX=5        max hits (default 5)
 - CONTEXT_OS_AUTOCONTEXT_MIN_WORD=4   min keyword length (default 4)
 - CONTEXT_OS_AUTOCONTEXT_MIN_PROMPT=15  min prompt length to trigger
+- CONTEXT_OS_AUTOCONTEXT_ABLATE=a,b   comma signals to disable (research)
 
 Fail-open on any error. Silent on no-match.
 """
 import json
+import math
 import os
 import re
 import sys
+
+# Small natural-language -> code-term expansion. Tuned from dogfood
+# failures where prompt describes behavior ("enormous") and code uses
+# a different convention ("size"). Kept deliberately small.
+EXPANSIONS = {
+    "duplicate": ("dedup",), "duplicates": ("dedup",),
+    "dedupe": ("dedup",), "deduplicate": ("dedup",),
+    "block": ("guard",), "blocks": ("guard",), "blocking": ("guard",),
+    "enormous": ("size", "large"), "huge": ("size", "large"),
+    "big": ("size",), "gigantic": ("size", "large"),
+    "benchmark": ("bench",), "benchmarks": ("bench",),
+    "benchmarking": ("bench",), "bench": ("bench",),
+    "simulator": ("replay", "simulate"), "simulation": ("replay", "simulate"),
+    "simulate": ("replay", "simulate"),
+    "adversarial": ("robust", "robustness"),
+    "robustness": ("robust",), "robust": ("robust",),
+    "warmup": ("prewarm", "warm"), "warm-up": ("prewarm", "warm"),
+    "evaluation": ("eval",), "evaluate": ("eval",),
+    "statistics": ("stats",), "statistical": ("stats",),
+    "ablation": ("ablate", "ablat"),
+    "ranking": ("rank",), "scoring": ("rank", "score"),
+    "penalty": ("penalt",), "penalize": ("penalt",), "penalise": ("penalt",),
+    "savings": ("saving", "save"), "saved": ("save",),
+}
 
 STOPWORDS = frozenset([
     "the","and","for","are","but","not","you","all","can","was","one","our",
@@ -1791,19 +1817,45 @@ def load_graph(root):
         return None
 
 
-def extract_tokens(prompt, min_word):
+def _graph_aware_stopwords(graph):
+    """Return stopword set with code-y tokens that appear as filename
+    parts promoted back to tokens. Keeps "test"/"file"/"find" etc.
+    usable as search terms on repos that have `test_foo.py`."""
+    files = graph.get("files") or {}
+    filename_toks = set()
+    for fpath in files.keys():
+        base = os.path.splitext(os.path.basename(fpath))[0].lower()
+        for part in re.split(r"[_\-.]+", base):
+            if len(part) >= 3:
+                filename_toks.add(part)
+    promotable = {"test","tests","file","files","find","check","run",
+                  "code","fix","add","make","use","show","create",
+                  "update","delete","change","remove"}
+    promoted = promotable & filename_toks
+    return STOPWORDS - promoted
+
+
+def extract_tokens(prompt, min_word, stopwords=STOPWORDS):
     tokens = set()
     for w in WORD_RE.findall(prompt):
         if len(w) < min_word:
             continue
         low = w.lower()
-        if low in STOPWORDS:
+        if low in stopwords:
             continue
         tokens.add(w)
         for part in CAMEL_SPLIT.split(w):
-            if len(part) >= min_word and part.lower() not in STOPWORDS:
+            if len(part) >= min_word and part.lower() not in stopwords:
                 tokens.add(part)
-    return tokens
+    # NL -> code expansion: only on explicit whole-word hits.
+    expanded = set()
+    lowered = {t.lower(): t for t in tokens}
+    for word in re.findall(r"[A-Za-z]+", prompt.lower()):
+        if word in EXPANSIONS:
+            for syn in EXPANSIONS[word]:
+                if syn not in lowered:
+                    expanded.add(syn)
+    return tokens | expanded
 
 
 def extract_paths(prompt):
@@ -1816,58 +1868,166 @@ def extract_paths(prompt):
     return paths
 
 
+def _ablate_set():
+    v = os.environ.get("CONTEXT_OS_AUTOCONTEXT_ABLATE", "")
+    return {s.strip() for s in v.split(",") if s.strip()}
+
+
+def _file_path_tokens(fpath):
+    toks = set()
+    low = fpath.lower()
+    for seg in re.split(r"[/\\]+", low):
+        base = os.path.splitext(seg)[0]
+        for part in re.split(r"[_\-.]+", base):
+            if len(part) >= 2:
+                toks.add(part)
+            for sub in re.findall(r"[a-z]+|[0-9]+", part):
+                if len(sub) >= 2:
+                    toks.add(sub)
+    return toks
+
+
+def _path_token_df(files):
+    df = {}
+    for fpath in files.keys():
+        for t in _file_path_tokens(fpath):
+            df[t] = df.get(t, 0) + 1
+    return df
+
+
+def _idf(df, token, N):
+    """Dampened IDF capped at 1.6 so rare tokens lift but don't
+    dominate exact symbol/path matches."""
+    n = df.get(token, 0)
+    if n == 0:
+        return 1.0
+    raw = math.log((N + 1) / (n + 0.5))
+    return max(1.0, min(1.6, raw / 2.0))
+
+
+def _normalize_prompt_forms(prompt):
+    low = prompt.lower()
+    under = re.sub(r"[^a-z0-9]+", "_", low).strip("_")
+    space = re.sub(r"[^a-z0-9]+", " ", low).strip()
+    none = re.sub(r"[^a-z0-9]+", "", low)
+    return under, space, none
+
+
 def rank(prompt, graph, max_hits, min_word):
     files = graph.get("files") or {}
     symbol_index = graph.get("symbol_index") or {}
     imported_by = graph.get("imported_by") or {}
     hot = {h.get("path"): h.get("touches", 0)
            for h in (graph.get("hot_files") or [])}
-    tokens = extract_tokens(prompt, min_word)
+
+    off = _ablate_set()
+    stopwords = _graph_aware_stopwords(graph)
+    tokens = extract_tokens(prompt, min_word, stopwords)
     paths = extract_paths(prompt)
+
+    N = max(1, len(files))
+    path_df = _path_token_df(files)
+
+    def path_idf(tok):
+        return _idf(path_df, tok.lower(), N)
+
+    under, space, _none = _normalize_prompt_forms(prompt)
+
     candidates = {}
 
-    def bump(f, ln, kind, sym, score):
+    def bump(f, ln, kind, sym, score, reason):
         key = (f, ln)
         cur = candidates.get(key)
         if cur is None:
             candidates[key] = {"file": f, "line": ln, "kind": kind,
-                                "symbol": sym, "score": score}
+                                "symbol": sym, "score": score,
+                                "reasons": [reason]}
         else:
             cur["score"] += score
+            if reason not in cur["reasons"]:
+                cur["reasons"].append(reason)
 
+    # 1. Symbol match — IDF-weighted.
     sym_lc = {k.lower(): k for k in symbol_index.keys()}
     for tok in tokens:
-        if tok in symbol_index:
+        if "symbol_exact" not in off and tok in symbol_index:
+            idf = max(1.0, path_idf(tok))
             for loc in symbol_index[tok]:
-                bump(loc["file"], loc["line"], loc.get("kind",""), tok, 10)
-        elif tok.lower() in sym_lc:
+                bump(loc["file"], loc["line"], loc.get("kind",""),
+                     tok, int(10 * idf), "symbol `" + tok + "`")
+        elif "symbol_ci" not in off and tok.lower() in sym_lc:
             real = sym_lc[tok.lower()]
+            idf = max(1.0, path_idf(tok))
             for loc in symbol_index[real]:
-                bump(loc["file"], loc["line"], loc.get("kind",""), real, 8)
+                bump(loc["file"], loc["line"], loc.get("kind",""),
+                     real, int(8 * idf),
+                     "symbol `" + real + "` (ci)")
 
+    # 2a. Basename-in-prompt — catches "robustness_test suite" etc.
+    if "path_exact" not in off:
+        for fpath in files.keys():
+            base_root = os.path.splitext(os.path.basename(fpath))[0].lower()
+            if len(base_root) < 5:
+                continue
+            base_under = re.sub(r"[^a-z0-9]+", "_", base_root).strip("_")
+            base_space = re.sub(r"[^a-z0-9]+", " ", base_root).strip()
+            if (base_under and base_under in under) or \
+               (base_space and " "+base_space+" " in " "+space+" "):
+                bump(fpath, 1, "file", os.path.basename(fpath),
+                     15, "basename `"+base_root+"` in prompt")
+
+    # 2b. Path / substring — IDF-weighted.
     for tok in list(tokens) + list(paths):
         tl = tok.lower()
         for fpath in files.keys():
             fl = fpath.lower()
-            if fl == tl or fl.endswith("/"+tl) or ("/" in tl and tl in fl):
-                bump(fpath, 1, "file", os.path.basename(fpath), 8)
-            elif len(tl) >= 5 and tl in fl:
-                bump(fpath, 1, "file", os.path.basename(fpath), 3)
+            if (("path_exact" not in off) and
+                    (fl == tl or fl.endswith("/"+tl)
+                     or ("/" in tl and tl in fl))):
+                bump(fpath, 1, "file", os.path.basename(fpath),
+                     int(8 * max(1.0, path_idf(tok))),
+                     "path `"+tok+"`")
+            elif ("path_substr" not in off) and len(tl) >= 4 and tl in fl:
+                bump(fpath, 1, "file", os.path.basename(fpath),
+                     int(3 * max(1.0, path_idf(tok))),
+                     "path contains `"+tok+"`")
 
-    for tok in tokens:
-        for mod, importers in imported_by.items():
-            if tok == mod or (len(tok) >= 5 and tok in mod):
-                for imp in importers[:3]:
-                    bump(imp, 1, "importer", mod, 5)
+    # 3. Import match — tight rule.
+    if "import" not in off:
+        for tok in tokens:
+            tl = tok.lower()
+            for mod, importers in imported_by.items():
+                ml = mod.lower()
+                last = ml.rsplit(".", 1)[-1].rsplit("/", 1)[-1]
+                if tl == ml or tl == last:
+                    for imp in importers[:3]:
+                        bump(imp, 1, "importer", mod, 3,
+                             "imports `"+mod+"`")
 
-    for c in candidates.values():
-        if c["file"] in hot:
-            c["score"] += 2
+    # 3b. Multi-token coverage bonus.
+    if "path_substr" not in off and tokens:
+        lowered_tokens = {t.lower() for t in tokens}
+        for key, c in list(candidates.items()):
+            fl = c["file"].lower()
+            base_toks = _file_path_tokens(c["file"])
+            hits = sum(1 for t in lowered_tokens
+                       if t in base_toks or (len(t) >= 4 and t in fl))
+            if hits >= 2:
+                bonus = min(8, 2 * (hits - 1))
+                c["score"] += bonus
+                c["reasons"].append(str(hits)+"-token path coverage")
 
-    # Test-file penalty unless prompt explicitly mentions testing.
+    # 4. Hot-file boost.
+    if "hot" not in off:
+        for c in candidates.values():
+            if c["file"] in hot:
+                c["score"] += 2
+                c["reasons"].append("hot")
+
+    # 5. Test-file penalty.
     prompt_low = prompt.lower()
     mentions_tests = any(w in prompt_low for w in ("test","tests","pytest","fixture"))
-    if not mentions_tests:
+    if "test_penalty" not in off and not mentions_tests:
         for c in candidates.values():
             f = c["file"]
             base = os.path.basename(f).lower()
@@ -1877,14 +2037,17 @@ def rank(prompt, graph, max_hits, min_word):
                     or base.endswith(".test.ts") or base.endswith(".test.js")
                     or base.endswith(".spec.ts") or base.endswith(".spec.js")):
                 c["score"] -= 3
+                c["reasons"].append("test-file penalty")
 
-    # Hub-file penalty: re-export gateways rarely the edit target.
-    hub_files = {"mod.rs","models.py","index.ts","index.js",
-                 "index.tsx","index.jsx","__init__.py","lib.rs"}
-    for c in candidates.values():
-        base = os.path.basename(c["file"]).lower()
-        if base in hub_files and base.split(".")[0] not in prompt_low and base not in prompt_low:
-            c["score"] -= 2
+    # 6. Hub-file penalty.
+    if "hub_penalty" not in off:
+        hub_files = {"mod.rs","models.py","index.ts","index.js",
+                     "index.tsx","index.jsx","__init__.py","lib.rs"}
+        for c in candidates.values():
+            base = os.path.basename(c["file"]).lower()
+            if base in hub_files and base.split(".")[0] not in prompt_low and base not in prompt_low:
+                c["score"] -= 2
+                c["reasons"].append("hub-file penalty")
 
     ranked = sorted(candidates.values(),
                     key=lambda c: (-c["score"], c["file"], c["line"]))

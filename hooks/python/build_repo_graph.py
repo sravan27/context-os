@@ -78,6 +78,11 @@ EXCLUDE_DIRS = {
     ".mypy_cache", ".ruff_cache", ".tox", "bower_components", "vendor",
     ".idea", ".vscode", ".context-os",
 }
+# Prefix-based excludes: dir name starts with any of these. Catches eval
+# fixtures, sibling mock repos, etc. without enumerating every variant.
+EXCLUDE_DIR_PREFIXES = (
+    "autocontext_fixture",   # our own eval fixtures — don't pollute graph
+)
 
 # Absolute cap per file to keep pathological files from stalling the walker
 MAX_LINES_SCAN = 20000
@@ -88,6 +93,7 @@ def walk_sources(root):
         dirnames[:] = [
             d for d in dirnames
             if d not in EXCLUDE_DIRS and not d.startswith(".")
+            and not any(d.startswith(p) for p in EXCLUDE_DIR_PREFIXES)
         ]
         for fn in filenames:
             if fn.startswith("."):
@@ -157,6 +163,10 @@ def hot_files(root, max_items=20):
             continue
         top = line.split("/", 1)[0]
         if top in EXCLUDE_DIRS:
+            continue
+        # Also honor prefix excludes at any path depth (fixture dirs etc.).
+        if any(seg.startswith(p) for seg in line.split("/")
+               for p in EXCLUDE_DIR_PREFIXES):
             continue
         # skip obvious lockfiles and binaries
         base = os.path.basename(line).lower()
