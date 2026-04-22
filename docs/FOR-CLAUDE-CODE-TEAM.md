@@ -1,6 +1,87 @@
 # Notes from Context OS to the Claude Code team
 
-We're the maintainers of [Context OS](https://github.com/sravan27/context-os) — a one-command installer that applies 16 token-optimization patterns on top of Claude Code (env vars, hooks, a default `.claudeignore`, a small Rust reducer, session-memory hooks). We built it because we kept burning through our own quotas on the same three or four failure modes, and we shipped it MIT-licensed so we could stop patching it privately on every machine. Writing this because a handful of the patterns feel upstream-worthy, not wrapper-worthy, and you have the telemetry to confirm or kill each one. No pitch; just receipts and hypotheses.
+We're the maintainers of [Context OS](https://github.com/sravan27/context-os) — a one-command installer that applies 28 token-optimization patterns on top of Claude Code (env vars, hooks, a default `.claudeignore`, a small Rust reducer, session-memory hooks, and a static-analysis RAG pipeline). We built it because we kept burning through our own quotas on the same three or four failure modes, and we shipped it MIT-licensed so we could stop patching it privately on every machine. Writing this because a handful of the patterns feel upstream-worthy, not wrapper-worthy, and you have the telemetry to confirm or kill each one. No pitch; just receipts and hypotheses.
+
+---
+
+## 2026-04-22 update — the big one
+
+Short version: **we have a ~400-line stdlib Python hook that saves ~41% of tokens on live Claude Code calls with p=5e-7 and Cohen's d=1.84. It's a `UserPromptSubmit` hook. No embeddings, no server, no model calls.** We think this primitive — static-analysis RAG — should live inside `claude` itself.
+
+### The receipts (v2.6.0, all reproducible in CI)
+
+**Live Claude A/B** on 36 real `claude --print` calls (6 prompts × 3 runs × 2 arms):
+
+| Metric | Value |
+|---|---:|
+| Aggregate token savings | **−40.9%** [bootstrap CI 32.7%, 48.9%] |
+| Prompt-level win rate | **6/6** |
+| Per-run win rate | 16/18 (Wilson CI [67.2%, 96.9%]) |
+| Paired t-test p-value | **5.06e-07** |
+| Cohen's d (paired) | **1.84** (large) |
+| Wall-clock savings | **−35.3%** (11.80s → 7.64s mean) |
+
+**Offline retrieval** (Python/TS/Rust, 32 hand-labeled prompts):
+- **MRR 0.969** · **P@3 0.703** · **+0.094 MRR over BM25-symbols** · **+0.407 over naive-filename**
+
+**Dogfood on our own repo** (49 src, 440 symbols, real heterogeneous codebase):
+
+| Method | MRR | Top-1 | P@3 |
+|---|---:|---:|---:|
+| **auto_context** | **0.800** | **0.667** | **0.322** |
+| bm25-symbols | 0.619 | 0.533 | 0.244 |
+| bm25-path | 0.536 | 0.467 | 0.256 |
+| naive-filename | 0.483 | 0.400 | 0.322 |
+| grep-count | 0.283 | 0.133 | 0.111 |
+| random | 0.061 | 0.000 | 0.000 |
+
+Beats every lexical baseline on real-repo prompts. Not just a synthetic-fixture number.
+
+**Operational**:
+- Hook p99 latency **173ms @ 10k files** (5× under 1s SLA)
+- **18/18 adversarial robustness cases** pass (unicode, 100k prompts, null bytes, corrupt graph, regex bombs, shell meta, path injection)
+- 8-signal leave-one-out ablation confirms no dead weight
+
+### How it works (30-second version)
+
+1. `build_repo_graph.py` walks the source tree once (≤1s on 10k files), extracts symbols + imports + git-hot files via regex, writes `.context-os/repo-graph.json`.
+2. `auto_context.py` is a `UserPromptSubmit` hook: extracts identifier/path tokens from the prompt, scores candidates from the graph (IDF-weighted symbol + path matches, basename-in-prompt detection, multi-token coverage bonus, import traversal, hot-file boost, test/hub-file penalties), emits a ≤50-token block.
+3. Claude sees the block *before* its first turn. Instead of `Glob → Grep → Read → Read → Read`, it usually goes straight to `Read` on the right file.
+
+### The ask
+
+We think **static-analysis RAG belongs in `claude` itself**, not as a third-party plugin. Three integration levels:
+
+- **(A) Bundle the hook**: ship our `auto_context.py` + `build_repo_graph.py` verbatim as `claude init-hooks --context`. Zero Anthropic-side work; opt-in; users get the full win.
+- **(B) Promote to a primitive**: `claude context build` / `claude context search` as first-class CLI verbs. Graph generation + query exposed to other tools and hooks.
+- **(C) Default-on**: run the graph on first prompt, inject on every `UserPromptSubmit`. Env-toggleable. This is where the savings accrue by default.
+
+We recommend B and would happily donate the code or PR it directly if there's interest. The implementation is stdlib-only, no dependencies, fail-open on every error, 391 lines of Python.
+
+### What we'd want from Anthropic to make this as good as possible
+
+1. **A stable `UserPromptSubmit` hook payload** so we can pin compatibility across releases. (Today we cross our fingers on minor versions.)
+2. **A `claude --token-report` flag** that emits per-turn usage as JSON. We instrument this with wrapper scripts today; native support would unlock real live benchmarks (ours uses `stream-json` which works but is fragile).
+3. **Guidance on the `settings.json` schema for first-class hooks** vs. plugin-delivered hooks vs. project-delivered hooks. We've shipped three installers to cover the combinations; one canonical spec would collapse them.
+
+### What we are NOT claiming
+
+- Not Anthropic-scale. Our live A/B is 36 calls on 6 prompts. Real scale is your telemetry, not ours.
+- Not universal. Semantic prompts with no filename/symbol overlap are the ceiling; lexical ranking will always cap there. A learned semantic reranker (cross-encoder, small model) is the obvious v3 path and we haven't built it.
+- Not competitive with embeddings at recall — we target *precision* at the first candidate, so the first `Read` is the right one, not that every candidate is relevant.
+
+### Links
+
+- Repo: https://github.com/sravan27/context-os
+- Release: https://github.com/sravan27/context-os/releases/tag/v2.6.0
+- Full proposal with methodology: [`docs/PROPOSAL.md`](PROPOSAL.md)
+- Evidence pack (all CI-gated, all reproducible): [`python/evals/reports/`](../python/evals/reports/)
+
+---
+
+## Earlier findings (v2.5 and before)
+
+The three findings below are from our initial write-up and still stand. Updated numbers where relevant.
 
 ---
 
