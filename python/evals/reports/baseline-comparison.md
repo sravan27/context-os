@@ -1,6 +1,6 @@
 # auto_context vs retrieval baselines
 
-_Generated 2026-04-21T14:04:47+00:00 · same 32 prompts × 3 fixtures as main eval_
+_Generated 2026-04-24T16:21:09+00:00 · same 32 prompts × 3 fixtures as main eval_
 
 ## Headline ranking
 

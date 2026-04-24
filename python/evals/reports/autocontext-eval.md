@@ -1,6 +1,6 @@
 # auto_context eval
 
-_Generated 2026-04-21T14:04:45+00:00 · K=3 · N=32 prompts across 3 fixtures_
+_Generated 2026-04-22T13:47:27+00:00 · K=3 · N=32 prompts across 3 fixtures_
 
 ## Aggregate (auto_context)
 

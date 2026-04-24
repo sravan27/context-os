@@ -8,7 +8,13 @@ We're the maintainers of [Context OS](https://github.com/sravan27/context-os) �
 
 Short version: **we have a ~400-line stdlib Python hook that saves ~41% of tokens on live Claude Code calls with p=5e-7 and Cohen's d=1.84. It's a `UserPromptSubmit` hook. No embeddings, no server, no model calls.** We think this primitive — static-analysis RAG — should live inside `claude` itself.
 
-### The receipts (v2.6.0, all reproducible in CI)
+**If you're here to decide whether to port this, read these in order** (~30 minutes total):
+- [`PITCH.md`](PITCH.md) — 5-minute leadership summary: one-number pitch, integration paths, ROI math (~$588M/year gross at 1M users).
+- [`REVIEW-CHECKLIST.md`](REVIEW-CHECKLIST.md) — 20-minute engineer walkthrough: 5 claims to verify, red flags for each, one-command reproduce.
+- [`SECURITY.md`](SECURITY.md) — privacy / enterprise review: zero network, stdlib-only, what the graph contains vs. what it never stores.
+- [`PROPOSAL.md`](PROPOSAL.md) — full methodology, cost model, risks, asks.
+
+### The receipts (v2.7.0, all reproducible in CI)
 
 **Live Claude A/B** on 36 real `claude --print` calls (6 prompts × 3 runs × 2 arms):
 
@@ -24,22 +30,23 @@ Short version: **we have a ~400-line stdlib Python hook that saves ~41% of token
 **Offline retrieval** (Python/TS/Rust, 32 hand-labeled prompts):
 - **MRR 0.969** · **P@3 0.703** · **+0.094 MRR over BM25-symbols** · **+0.407 over naive-filename**
 
-**Dogfood on our own repo** (49 src, 440 symbols, real heterogeneous codebase):
+**Dogfood on our own repo** (50 src, 444 symbols, real heterogeneous codebase):
 
 | Method | MRR | Top-1 | P@3 |
 |---|---:|---:|---:|
-| **auto_context** | **0.800** | **0.667** | **0.322** |
-| bm25-symbols | 0.619 | 0.533 | 0.244 |
-| bm25-path | 0.536 | 0.467 | 0.256 |
+| **auto_context** | **0.789** | **0.667** | **0.322** |
+| bm25-symbols | 0.608 | 0.533 | 0.244 |
+| bm25-path | 0.525 | 0.467 | 0.256 |
 | naive-filename | 0.483 | 0.400 | 0.322 |
-| grep-count | 0.283 | 0.133 | 0.111 |
+| grep-count | 0.272 | 0.133 | 0.111 |
 | random | 0.061 | 0.000 | 0.000 |
 
 Beats every lexical baseline on real-repo prompts. Not just a synthetic-fixture number.
 
-**Operational**:
-- Hook p99 latency **173ms @ 10k files** (5× under 1s SLA)
+**Operational** (v2.7 `path_df` precomputation):
+- Hook p99 latency **118ms @ 10k files** · **589ms @ 50k files** (1.7× under 1s SLA)
 - **18/18 adversarial robustness cases** pass (unicode, 100k prompts, null bytes, corrupt graph, regex bombs, shell meta, path injection)
+- **9 CI-enforced regression gates** (`ranker_floor.py`) — retrieval quality cannot silently regress
 - 8-signal leave-one-out ablation confirms no dead weight
 
 ### How it works (30-second version)
@@ -73,8 +80,11 @@ We recommend B and would happily donate the code or PR it directly if there's in
 ### Links
 
 - Repo: https://github.com/sravan27/context-os
-- Release: https://github.com/sravan27/context-os/releases/tag/v2.6.0
-- Full proposal with methodology: [`docs/PROPOSAL.md`](PROPOSAL.md)
+- Release: https://github.com/sravan27/context-os/releases/tag/v2.7.0
+- 5-minute pitch: [`docs/PITCH.md`](PITCH.md)
+- 20-minute reviewer walkthrough: [`docs/REVIEW-CHECKLIST.md`](REVIEW-CHECKLIST.md)
+- Enterprise/security model: [`docs/SECURITY.md`](SECURITY.md)
+- Full methodology: [`docs/PROPOSAL.md`](PROPOSAL.md)
 - Evidence pack (all CI-gated, all reproducible): [`python/evals/reports/`](../python/evals/reports/)
 
 ---

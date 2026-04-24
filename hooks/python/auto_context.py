@@ -230,7 +230,11 @@ def rank(prompt, graph, max_hits, min_word):
     # IDF over filename-tokens. Rare tokens get higher weight so
     # `robustness` (1 file) beats `auto` (many files) on path matches.
     N = max(1, len(files))
-    path_df = _path_token_df(files)
+    # Prefer precomputed df from build_repo_graph.py (graph version ≥ 2).
+    # Drops per-query O(N·tokens) scan, critical above ~10k files.
+    path_df = graph.get("path_df")
+    if not path_df:
+        path_df = _path_token_df(files)
 
     def path_idf(tok):
         return _idf(path_df, tok.lower(), N)

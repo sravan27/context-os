@@ -81,6 +81,10 @@ jobs:
           python3 python/evals/runners/dogfood_eval.py
           test -f python/evals/reports/dogfood-eval.md
 
+      - name: Ranker regression floor (hard gate)
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 python/evals/runners/ranker_floor.py
+
       - name: Upload eval reports
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
