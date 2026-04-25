@@ -1,0 +1,69 @@
+{
+  "description": "Hand-labeled prompts for psf/requests (Python HTTP client). 12 descriptive prompts — filenames deliberately not mentioned in most. expected_files identified by reading the repo at SHA f43f750e.",
+  "repo": "psf/requests",
+  "url": "https://github.com/psf/requests.git",
+  "sha": "f43f750ee10addbaa13901c1017631b4d70fd6e3",
+  "source_root": "src/requests",
+  "prompts": [
+    {
+      "id": "top-level-get-post-api",
+      "prompt": "where is the top-level get/post/put/delete request function that users call",
+      "expected_files": ["src/requests/api.py"]
+    },
+    {
+      "id": "session-persistence",
+      "prompt": "how does it persist cookies and connection pools across calls in one session",
+      "expected_files": ["src/requests/sessions.py"]
+    },
+    {
+      "id": "retry-and-transport-adapter",
+      "prompt": "transport adapter that handles retries and connection pooling",
+      "expected_files": ["src/requests/adapters.py"]
+    },
+    {
+      "id": "request-response-models",
+      "prompt": "the PreparedRequest and Response classes and how the request body is prepared",
+      "expected_files": ["src/requests/models.py"]
+    },
+    {
+      "id": "cookie-jar",
+      "prompt": "how are cookies stored and converted between jar formats",
+      "expected_files": ["src/requests/cookies.py"]
+    },
+    {
+      "id": "basic-digest-auth",
+      "prompt": "basic and digest authentication handlers",
+      "expected_files": ["src/requests/auth.py"]
+    },
+    {
+      "id": "exception-hierarchy",
+      "prompt": "the hierarchy of exceptions like ConnectionError, Timeout, HTTPError",
+      "expected_files": ["src/requests/exceptions.py"]
+    },
+    {
+      "id": "status-codes",
+      "prompt": "lookup table mapping HTTP status codes to their names",
+      "expected_files": ["src/requests/status_codes.py"]
+    },
+    {
+      "id": "url-encoding-helpers",
+      "prompt": "helpers for encoding URL parameters and handling unicode in headers",
+      "expected_files": ["src/requests/utils.py"]
+    },
+    {
+      "id": "py2-py3-compat",
+      "prompt": "python 2 vs 3 compatibility shim",
+      "expected_files": ["src/requests/compat.py"]
+    },
+    {
+      "id": "hook-dispatch",
+      "prompt": "response hook dispatching mechanism",
+      "expected_files": ["src/requests/hooks.py"]
+    },
+    {
+      "id": "case-insensitive-headers",
+      "prompt": "case-insensitive dict used to store HTTP headers",
+      "expected_files": ["src/requests/structures.py"]
+    }
+  ]
+}

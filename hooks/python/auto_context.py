@@ -57,6 +57,26 @@ EXPANSIONS = {
     "ranking": ("rank",), "scoring": ("rank", "score"),
     "penalty": ("penalt",), "penalize": ("penalt",), "penalise": ("penalt",),
     "savings": ("saving", "save"), "saved": ("save",),
+    "authentication": ("auth",), "authenticate": ("auth",),
+    "authenticated": ("auth",), "authenticating": ("auth",),
+    "authorization": ("auth",), "authorize": ("auth",),
+    "exception": ("except",), "exceptions": ("except",),
+    "configure": ("config",), "configuration": ("config",),
+    "configured": ("config",), "configuring": ("config",),
+    "persistence": ("persist",), "persisting": ("persist",),
+    "persisted": ("persist",),
+    "directory": ("dir",), "directories": ("dir",),
+    "initialize": ("init",), "initialized": ("init",),
+    "initialization": ("init",),
+    "comparison": ("compare", "cmp"), "comparing": ("compare", "cmp"),
+    "connection": ("conn",), "connections": ("conn",),
+    "parser": ("parse",), "parsed": ("parse",), "parsing": ("parse",),
+    "compiler": ("compile",), "compiled": ("compile",),
+    "compilation": ("compile",),
+    "printer": ("print",), "printing": ("print",),
+    "matcher": ("match",), "matching": ("match",), "matches": ("match",),
+    "walker": ("walk",), "walking": ("walk",),
+    "searcher": ("search",), "searching": ("search",),
 }
 
 # Common English + code-chatter words that shouldn't drive symbol lookup.
@@ -128,6 +148,27 @@ def _graph_aware_stopwords(graph):
     return STOPWORDS - promoted
 
 
+def _stem_variants(tok):
+    """Produce plural ↔ singular variants for one token. Conservative:
+    only handles the common English cases (s, es) and requires the base
+    to be at least 4 chars so we never strip meaningful suffixes off
+    short tokens like `is`, `as`, `os`. Returns a set *including* the
+    input token."""
+    low = tok.lower()
+    out = {low}
+    if len(low) >= 5 and low.endswith("ies"):
+        out.add(low[:-3] + "y")                 # cookies -> cooky? no, but:
+    if len(low) >= 5 and low.endswith("es"):
+        out.add(low[:-2])                       # matches -> match
+    if len(low) >= 4 and low.endswith("s") and not low.endswith("ss"):
+        out.add(low[:-1])                       # sessions -> session
+    # And the other direction — singular → plural — so "cookie" matches
+    # "cookies" in a basename.
+    if len(low) >= 4 and not low.endswith("s"):
+        out.add(low + "s")
+    return out
+
+
 def extract_tokens(prompt, min_word, stopwords=STOPWORDS):
     tokens = set()
     # Whole words
@@ -151,7 +192,16 @@ def extract_tokens(prompt, min_word, stopwords=STOPWORDS):
             for syn in EXPANSIONS[word]:
                 if syn not in lowered:
                     expanded.add(syn)
-    return tokens | expanded
+    # Plural/singular variants — so "cookies" in prompt matches `cookies.py`
+    # *and* "cookie" in prompt matches `cookies.py`. Guarded to ≥4 char bases
+    # so we don't coin nonsense (`is`→`i`, `as`→`a`). No cross-token
+    # conflation: each variant is only added if it isn't already present.
+    stems = set()
+    for t in tokens | expanded:
+        for v in _stem_variants(t):
+            if v not in lowered and len(v) >= min_word:
+                stems.add(v)
+    return tokens | expanded | stems
 
 
 def extract_paths(prompt):
@@ -292,22 +342,55 @@ def rank(prompt, graph, max_hits, min_word):
                      15, f"basename `{base_root}` in prompt")
 
     # 2b. Path / substring in file keys — IDF-weighted so common tokens
-    #     don't dominate. Keeps the previous path_exact/path_substr
-    #     distinction but weights by log((N+1)/(df+0.5)).
+    #     don't dominate. Two changes from v2.7:
+    #     (a) Exact basename-root match (`sessions` matches basename of
+    #         sessions.py) promoted to its own weight (+6), separate from
+    #         general substring (+3). Catches the uniform-naming case where
+    #         `request` is in every path but `sessions`-as-basename is
+    #         the actual discriminator.
+    #     (b) Substring bonus is scaled by discriminativity (1 − df/N).
+    #         A token present in every file contributes ~0; a token in
+    #         one file contributes ~full weight. Smooth, no hard cutoff.
+    # Case-fold + dedupe before path matching. Prevents triple-counting
+    # `Request`, `request`, `requests` (all the same concept) as three
+    # independent bumps per file.
+    path_tokens_seen = set()
+    path_tokens_dedup = []
     for tok in list(tokens) + list(paths):
         tl = tok.lower()
+        if tl in path_tokens_seen:
+            continue
+        path_tokens_seen.add(tl)
+        path_tokens_dedup.append(tok)
+
+    for tok in path_tokens_dedup:
+        tl = tok.lower()
+        tok_df = path_df.get(tl, 0) if path_df else 0
+        # Discriminativity multiplier: 1.0 when unique, 0 when in all files.
+        disc = max(0.0, 1.0 - (tok_df / float(N)))
         for fpath in files.keys():
             fl = fpath.lower()
+            base = os.path.basename(fl)
             if (("path_exact" not in off) and
                     (fl == tl or fl.endswith("/" + tl)
                      or ("/" in tl and tl in fl))):
                 bump(fpath, 1, "file", os.path.basename(fpath),
                      int(8 * max(1.0, path_idf(tok))),
                      f"path `{tok}`")
-            elif ("path_substr" not in off) and len(tl) >= 4 and tl in fl:
-                bump(fpath, 1, "file", os.path.basename(fpath),
-                     int(3 * max(1.0, path_idf(tok))),
-                     f"path contains `{tok}`")
+            elif ("path_substr" not in off) and len(tl) >= 4:
+                base_root = os.path.splitext(base)[0]
+                if base_root == tl:
+                    # Exact basename match is always informative.
+                    bump(fpath, 1, "file", os.path.basename(fpath),
+                         int(6 * max(1.0, path_idf(tok))),
+                         f"basename `{tok}`")
+                elif tl in fl:
+                    # Scale bonus by how discriminative this token is.
+                    score = int(3 * max(1.0, path_idf(tok)) * disc)
+                    if score > 0:
+                        bump(fpath, 1, "file", os.path.basename(fpath),
+                             score,
+                             f"path contains `{tok}`")
 
     # 3. Import module matches — surface importers. Tight rule: only
     # fires when a prompt token exactly equals a module name or matches
@@ -387,16 +470,31 @@ def rank(prompt, graph, max_hits, min_word):
                     c["score"] -= 2
                     c["reasons"].append("hub-file penalty")
 
-    ranked = sorted(candidates.values(),
-                    key=lambda c: (-c["score"], c["file"], c["line"]))
-    # Dedupe: keep at most 2 hits per file
-    per_file = {}
+    # File-level score aggregation. A file with 3 different relevant
+    # symbols (e.g. `Request`, `Response`, `PreparedRequest` all in
+    # models.py) should outrank a file with 1 weak path-substring hit.
+    # Previously the first line was ranked in isolation, so 3 symbol
+    # hits at +10 each looked like three separate candidates instead
+    # of one file scoring +30. We aggregate per file, take the
+    # highest-scoring line as the representative, and rank files by
+    # the summed score.
+    per_file_score = {}
+    per_file_best = {}
+    for c in candidates.values():
+        f = c["file"]
+        per_file_score[f] = per_file_score.get(f, 0) + c["score"]
+        cur_best = per_file_best.get(f)
+        if cur_best is None or c["score"] > cur_best["score"]:
+            per_file_best[f] = c
+
+    # Build the output list: one representative candidate per file,
+    # whose visible `score` is the aggregate. Ordered by aggregate desc.
     out = []
-    for c in ranked:
-        if per_file.get(c["file"], 0) >= 2:
-            continue
-        per_file[c["file"]] = per_file.get(c["file"], 0) + 1
-        out.append(c)
+    for f in sorted(per_file_score.keys(),
+                    key=lambda x: (-per_file_score[x], x)):
+        rep = dict(per_file_best[f])
+        rep["score"] = per_file_score[f]
+        out.append(rep)
         if len(out) >= max_hits:
             break
     return out

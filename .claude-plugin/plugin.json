@@ -1,7 +1,7 @@
 {
   "name": "context-os",
-  "description": "Context optimization layer for Claude Code. Static-analysis RAG via UserPromptSubmit hook — Claude's first turn starts with file:line candidates from a pre-built repo graph (no embeddings, no server). Live `claude --print` A/B on 36 real calls: −40.9% aggregate tokens [CI 32.7%, 48.9%], 6/6 wins, p=5e-7, Cohen's d=1.84. Offline MRR 0.969 across Python/TS/Rust (+0.094 over BM25-symbols). Dogfood on this repo: MRR 0.789, top-1 0.667 — beats all 5 lexical baselines (+0.181 MRR over BM25-symbols). v2.7 path_df precomputation: p99 hook latency 118ms at 10k files, 589ms at 50k files (1.7× under SLA). CI-enforced ranker regression gate (9 hard floors). 18/18 robustness cases. Eleven slash commands, six Python hooks. 28 techniques, one installer.",
-  "version": "2.7.0",
+  "description": "Context optimization layer for Claude Code. Static-analysis RAG via UserPromptSubmit hook — Claude's first turn starts with file:line candidates from a pre-built repo graph (no embeddings, no server). Live `claude --print` A/B on 36 real calls: −40.9% aggregate tokens [CI 32.7%, 48.9%], 6/6 wins, p=5e-7, Cohen's d=1.84. Offline MRR 0.984 across Python/TS/Rust (+0.109 over BM25-symbols). Dogfood on this repo: MRR 0.756, top-1 0.600 — beats all 5 lexical baselines. v2.8 cross-repo: 36 hand-labeled prompts × 3 unseen OSS repos (axios, ripgrep, requests) — weighted-aggregate MRR 0.545 vs best baseline 0.461 (+18.2%). v2.7 path_df precomputation: p99 hook latency 118ms at 10k files, 589ms at 50k files (1.7× under SLA). CI-enforced ranker regression gate (9 hard floors). 18/18 robustness cases. Eleven slash commands, six Python hooks. 28 techniques, one installer.",
+  "version": "2.8.0",
   "author": {
     "name": "sravan27",
     "url": "https://github.com/sravan27"

@@ -1,0 +1,69 @@
+{
+  "description": "Hand-labeled prompts for axios/axios (JS HTTP client). 12 descriptive prompts. expected_files identified by reading the repo at SHA afca61a0.",
+  "repo": "axios/axios",
+  "url": "https://github.com/axios/axios.git",
+  "sha": "afca61a070728e717203c2bc21e7b589b59b858b",
+  "source_root": "lib",
+  "prompts": [
+    {
+      "id": "request-and-response-interceptors",
+      "prompt": "manager that stores request and response interceptors and runs them in a chain",
+      "expected_files": ["lib/core/InterceptorManager.js"]
+    },
+    {
+      "id": "dispatch-request",
+      "prompt": "where is the function that actually sends the prepared request through the configured adapter",
+      "expected_files": ["lib/core/dispatchRequest.js"]
+    },
+    {
+      "id": "node-http-adapter",
+      "prompt": "adapter that uses Node http module to send requests",
+      "expected_files": ["lib/adapters/http.js"]
+    },
+    {
+      "id": "browser-xhr-adapter",
+      "prompt": "adapter that uses XMLHttpRequest in the browser",
+      "expected_files": ["lib/adapters/xhr.js"]
+    },
+    {
+      "id": "fetch-adapter",
+      "prompt": "adapter built on top of the fetch API",
+      "expected_files": ["lib/adapters/fetch.js"]
+    },
+    {
+      "id": "cancel-token",
+      "prompt": "the token-based request cancellation mechanism",
+      "expected_files": ["lib/cancel/CancelToken.js"]
+    },
+    {
+      "id": "merge-config",
+      "prompt": "how are default config and per-request config merged",
+      "expected_files": ["lib/core/mergeConfig.js"]
+    },
+    {
+      "id": "error-type",
+      "prompt": "the custom error class that carries request and response on failure",
+      "expected_files": ["lib/core/AxiosError.js"]
+    },
+    {
+      "id": "headers-container",
+      "prompt": "the class that stores and normalizes HTTP headers",
+      "expected_files": ["lib/core/AxiosHeaders.js"]
+    },
+    {
+      "id": "build-url-params",
+      "prompt": "helper that serializes a params object into a URL query string",
+      "expected_files": ["lib/helpers/buildURL.js"]
+    },
+    {
+      "id": "full-path-builder",
+      "prompt": "combines baseURL and request URL into the final absolute URL",
+      "expected_files": ["lib/core/buildFullPath.js"]
+    },
+    {
+      "id": "settle-promise",
+      "prompt": "resolves or rejects the promise based on the HTTP status code validator",
+      "expected_files": ["lib/core/settle.js"]
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "description": "Hand-labeled prompts for BurntSushi/ripgrep (Rust grep). 12 descriptive prompts. expected_files identified by reading the repo at SHA 4519153e.",
+  "repo": "BurntSushi/ripgrep",
+  "url": "https://github.com/BurntSushi/ripgrep.git",
+  "sha": "4519153e5e461527f4bca45b042fff45c4ec6fb9",
+  "source_root": "crates",
+  "prompts": [
+    {
+      "id": "cli-entrypoint",
+      "prompt": "where is the main entry point that ripgrep starts from",
+      "expected_files": ["crates/core/main.rs"]
+    },
+    {
+      "id": "gitignore-parsing",
+      "prompt": "parser and matcher for .gitignore-style patterns",
+      "expected_files": ["crates/ignore/src/gitignore.rs"]
+    },
+    {
+      "id": "parallel-directory-walker",
+      "prompt": "parallel directory walker that respects ignore rules",
+      "expected_files": ["crates/ignore/src/walk.rs"]
+    },
+    {
+      "id": "glob-compiler",
+      "prompt": "compiles glob expressions into a matcher",
+      "expected_files": ["crates/globset/src/glob.rs"]
+    },
+    {
+      "id": "line-buffer",
+      "prompt": "buffered reader that yields lines for the searcher",
+      "expected_files": ["crates/searcher/src/line_buffer.rs"]
+    },
+    {
+      "id": "printer-with-color",
+      "prompt": "printer that outputs matches with ANSI color codes",
+      "expected_files": ["crates/printer/src/color.rs", "crates/printer/src/standard.rs"]
+    },
+    {
+      "id": "json-output",
+      "prompt": "emits matches as JSON Lines for integration with other tools",
+      "expected_files": ["crates/printer/src/json.rs"]
+    },
+    {
+      "id": "regex-matcher-config",
+      "prompt": "how the regex matcher is configured with case sensitivity and word boundaries",
+      "expected_files": ["crates/regex/src/config.rs", "crates/regex/src/matcher.rs"]
+    },
+    {
+      "id": "file-type-detection",
+      "prompt": "file-type detection that maps extensions to language names",
+      "expected_files": ["crates/ignore/src/types.rs", "crates/ignore/src/default_types.rs"]
+    },
+    {
+      "id": "sink-trait",
+      "prompt": "the trait that consumes matches produced by the searcher",
+      "expected_files": ["crates/searcher/src/sink.rs"]
+    },
+    {
+      "id": "pcre2-backend",
+      "prompt": "alternative regex backend using PCRE2",
+      "expected_files": ["crates/pcre2/src/matcher.rs"]
+    },
+    {
+      "id": "match-statistics",
+      "prompt": "tracks match count, byte count, and line count statistics during a search",
+      "expected_files": ["crates/printer/src/stats.rs"]
+    }
+  ]
+}

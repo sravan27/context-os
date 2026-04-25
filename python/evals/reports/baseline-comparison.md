@@ -1,12 +1,12 @@
 # auto_context vs retrieval baselines
 
-_Generated 2026-04-24T16:21:09+00:00 · same 32 prompts × 3 fixtures as main eval_
+_Generated 2026-04-25T11:24:17+00:00 · same 32 prompts × 3 fixtures as main eval_
 
 ## Headline ranking
 
 | Retrieval method | P@3 | R@3 | MRR | Coverage |
 |---|---:|---:|---:|---:|
-| **auto_context** | **0.703** | 0.682 | **0.969** | 1.000 |
+| **auto_context** | **0.698** | 0.729 | **0.984** | 1.000 |
 | bm25-symbols | 0.578 | 0.656 | 0.875 | 0.969 |
 | bm25-path | 0.557 | 0.552 | 0.714 | 0.812 |
 | grep-count | 0.516 | 0.688 | 0.849 | 1.000 |
@@ -17,11 +17,11 @@ _Generated 2026-04-24T16:21:09+00:00 · same 32 prompts × 3 fixtures as main ev
 
 | Baseline | auto_context P@3 | baseline P@3 | ΔP@3 | auto_context MRR | baseline MRR | ΔMRR |
 |---|---:|---:|---:|---:|---:|---:|
-| bm25-symbols | 0.703 | 0.578 | **+0.125** | 0.969 | 0.875 | **+0.094** |
-| bm25-path | 0.703 | 0.557 | **+0.146** | 0.969 | 0.714 | **+0.255** |
-| grep-count | 0.703 | 0.516 | **+0.188** | 0.969 | 0.849 | **+0.120** |
-| naive-filename | 0.703 | 0.490 | **+0.214** | 0.969 | 0.562 | **+0.406** |
-| random | 0.703 | 0.177 | **+0.526** | 0.969 | 0.407 | **+0.562** |
+| bm25-symbols | 0.698 | 0.578 | **+0.120** | 0.984 | 0.875 | **+0.109** |
+| bm25-path | 0.698 | 0.557 | **+0.141** | 0.984 | 0.714 | **+0.271** |
+| grep-count | 0.698 | 0.516 | **+0.182** | 0.984 | 0.849 | **+0.135** |
+| naive-filename | 0.698 | 0.490 | **+0.208** | 0.984 | 0.562 | **+0.422** |
+| random | 0.698 | 0.177 | **+0.521** | 0.984 | 0.407 | **+0.578** |
 
 ## Per-baseline notes
 
@@ -31,9 +31,9 @@ Context-OS auto_context hook (full ranker)
 
 | Fixture | P@3 | R@3 | MRR | Coverage |
 |---|---:|---:|---:|---:|
-| python | 0.708 | 0.694 | 1.000 | 1.000 |
-| typescript | 0.733 | 0.700 | 0.950 | 1.000 |
-| rust | 0.667 | 0.650 | 0.950 | 1.000 |
+| python | 0.694 | 0.708 | 1.000 | 1.000 |
+| typescript | 0.767 | 0.783 | 1.000 | 1.000 |
+| rust | 0.633 | 0.700 | 0.950 | 1.000 |
 
 ### `bm25-symbols`
 

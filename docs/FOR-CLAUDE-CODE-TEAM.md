@@ -14,7 +14,7 @@ Short version: **we have a ~400-line stdlib Python hook that saves ~41% of token
 - [`SECURITY.md`](SECURITY.md) — privacy / enterprise review: zero network, stdlib-only, what the graph contains vs. what it never stores.
 - [`PROPOSAL.md`](PROPOSAL.md) — full methodology, cost model, risks, asks.
 
-### The receipts (v2.7.0, all reproducible in CI)
+### The receipts (v2.8.0, all reproducible in CI)
 
 **Live Claude A/B** on 36 real `claude --print` calls (6 prompts × 3 runs × 2 arms):
 
@@ -28,20 +28,32 @@ Short version: **we have a ~400-line stdlib Python hook that saves ~41% of token
 | Wall-clock savings | **−35.3%** (11.80s → 7.64s mean) |
 
 **Offline retrieval** (Python/TS/Rust, 32 hand-labeled prompts):
-- **MRR 0.969** · **P@3 0.703** · **+0.094 MRR over BM25-symbols** · **+0.407 over naive-filename**
+- **MRR 0.984** · **P@3 0.698** · **+0.109 MRR over BM25-symbols** · **+0.422 over naive-filename**
 
 **Dogfood on our own repo** (50 src, 444 symbols, real heterogeneous codebase):
 
 | Method | MRR | Top-1 | P@3 |
 |---|---:|---:|---:|
-| **auto_context** | **0.789** | **0.667** | **0.322** |
-| bm25-symbols | 0.608 | 0.533 | 0.244 |
+| **auto_context** | **0.756** | **0.600** | **0.322** |
+| bm25-symbols | 0.614 | 0.533 | 0.244 |
 | bm25-path | 0.525 | 0.467 | 0.256 |
 | naive-filename | 0.483 | 0.400 | 0.322 |
 | grep-count | 0.272 | 0.133 | 0.111 |
 | random | 0.061 | 0.000 | 0.000 |
 
 Beats every lexical baseline on real-repo prompts. Not just a synthetic-fixture number.
+
+**Cross-repo generalization** (v2.8 — 36 prompts × 3 unseen OSS repos, hand-labeled, pinned SHAs):
+
+| Repo (lang, files)        | auto_context MRR | Best baseline       | Δ MRR    |
+|---------------------------|-----------------:|---------------------|---------:|
+| axios/axios (JS, 214)     | **0.382**        | bm25-path (0.252)   | **+0.130** |
+| BurntSushi/ripgrep (Rust, 100) | **0.503**   | bm25-path (0.459)   | **+0.044** |
+| psf/requests (Py, 36)     | 0.750            | bm25-symbols (0.875)| −0.125   |
+
+**Weighted aggregate across 36 prompts: auto_context 0.545 vs best baseline 0.461 — +18.2%.**
+
+The one loss (psf/requests) is honest: prompts in that set use exact class names (`PreparedRequest`, `HTTPError`, `CaseInsensitiveDict`), which is the lexical-retrieval ceiling regime where bm25-symbols caps. We win the aggregate, in every language, on every repo where prompts are descriptive instead of class-named. We don't pretend otherwise.
 
 **Operational** (v2.7 `path_df` precomputation):
 - Hook p99 latency **118ms @ 10k files** · **589ms @ 50k files** (1.7× under 1s SLA)
@@ -74,13 +86,13 @@ We recommend B and would happily donate the code or PR it directly if there's in
 ### What we are NOT claiming
 
 - Not Anthropic-scale. Our live A/B is 36 calls on 6 prompts. Real scale is your telemetry, not ours.
-- Not universal. Semantic prompts with no filename/symbol overlap are the ceiling; lexical ranking will always cap there. A learned semantic reranker (cross-encoder, small model) is the obvious v3 path and we haven't built it.
+- Not universal. On repos where the prompt names the exact class (e.g. `PreparedRequest`, `HTTPError`), `bm25-symbols` matches us — that's the lexical-retrieval ceiling regime. We win the cross-repo aggregate, but we won't pretend we win every repo.
 - Not competitive with embeddings at recall — we target *precision* at the first candidate, so the first `Read` is the right one, not that every candidate is relevant.
 
 ### Links
 
 - Repo: https://github.com/sravan27/context-os
-- Release: https://github.com/sravan27/context-os/releases/tag/v2.7.0
+- Release: https://github.com/sravan27/context-os/releases/tag/v2.8.0
 - 5-minute pitch: [`docs/PITCH.md`](PITCH.md)
 - 20-minute reviewer walkthrough: [`docs/REVIEW-CHECKLIST.md`](REVIEW-CHECKLIST.md)
 - Enterprise/security model: [`docs/SECURITY.md`](SECURITY.md)

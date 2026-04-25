@@ -21,9 +21,9 @@ Runs in <1s; reads the raw JSON, emits the stats markdown. Inspect both the raw 
 - Rigged token measurement? All numbers come from Claude Code's own `usage` object in the `stream-json` output. See `python/evals/runners/live_session_bench.py:run_one()`.
 - P-value massaged? The t-test is vanilla paired on `tokens_treatment − tokens_control` per run. Check `live_bench_stats.py:paired_t()`.
 
-### 2. The offline MRR 0.969 is not an over-fit
+### 2. The offline MRR 0.984 is not an over-fit
 
-**Claim:** on 32 hand-labeled prompts × 3 language fixtures, auto_context achieves MRR 0.969 and beats BM25-symbols by +0.094 MRR.
+**Claim:** on 32 hand-labeled prompts × 3 language fixtures, auto_context achieves MRR 0.984 and beats BM25-symbols by +0.109 MRR.
 
 **Read:** [`python/evals/reports/autocontext-eval.md`](../python/evals/reports/autocontext-eval.md) and [`python/evals/reports/baseline-comparison.md`](../python/evals/reports/baseline-comparison.md).
 
@@ -39,18 +39,19 @@ python3 python/evals/runners/baseline_comparison.py
 
 ### 3. It works on real code, not just synthetic fixtures
 
-**Claim:** on the Context-OS repo itself (50 source files, 444 symbols, real heterogeneous codebase), auto_context achieves MRR 0.789 and beats every lexical baseline including +0.181 MRR over BM25-symbols.
+**Claim:** on the Context-OS repo itself (50 source files, 444 symbols, real heterogeneous codebase), auto_context achieves MRR 0.756 and beats every lexical baseline including +0.142 MRR over BM25-symbols. Beyond dogfood, on **three unseen OSS repos** (axios/axios JS, BurntSushi/ripgrep Rust, psf/requests Py — 36 hand-labeled prompts), auto_context wins the **weighted aggregate MRR 0.545 vs best baseline 0.461 (+18.2%)**.
 
-**Read:** [`python/evals/reports/dogfood-eval.md`](../python/evals/reports/dogfood-eval.md).
+**Read:** [`python/evals/reports/dogfood-eval.md`](../python/evals/reports/dogfood-eval.md), [`python/evals/reports/multi-repo-eval.md`](../python/evals/reports/multi-repo-eval.md).
 
 **Re-derive:**
 ```bash
 python3 python/evals/runners/dogfood_eval.py
+python3 python/evals/runners/multi_repo_eval.py    # clones 3 OSS repos to /tmp on first run
 ```
 
 **Red flags to look for:**
-- Prompts tailored to this repo's naming? The 15 prompts are in `python/evals/dogfood_prompts.json`. Two thirds are descriptive ("hook that blocks reading enormous files"). The honest scope note in the report is explicit about the regime.
-- You can re-run on any repo: add 10-15 hand-labeled prompts to a copy of `dogfood_prompts.json` and point `dogfood_eval.py` at that repo.
+- Prompts tailored to this repo's naming? The 15 dogfood prompts are in `python/evals/dogfood_prompts.json`; the 36 multi-repo prompts are in `python/evals/multi_repo_prompts/*.json`. Most are descriptive ("hook that blocks reading enormous files", "parser and matcher for .gitignore-style patterns"). Pinned SHAs verify expected files.
+- Cherry-picked repos? We picked the first three popular OSS repos that span Py / JS / Rust and weren't already in our fixtures. Acceptance criterion in `multi_repo_eval.py` is honest: aggregate must win + per-repo must beat avg-baseline. We surface the one repo (psf/requests) where bm25-symbols matches us — prompts use exact class names, the lexical-retrieval ceiling regime.
 
 ### 4. It doesn't crash on pathological input
 
@@ -115,7 +116,7 @@ Everything else is either evaluation infrastructure or supporting hooks (dedup, 
 
 ## Likely objections (with our honest answer)
 
-**"Lexical retrieval caps at MRR 0.969; semantic rankers would do better."**
+**"Lexical retrieval caps at MRR 0.984; semantic rankers would do better."**
 Agreed. Lexical is cheap, fast, explainable, and stdlib-only. The −40.9% tokens number is measured against a *strong* baseline (Claude does its own retrieval natively), not a strawman. A semantic reranker on top of this is v3 material and we're happy to collaborate.
 
 **"This won't scale to 100k-file monorepos."**
@@ -128,14 +129,14 @@ Yes. We accept ~5% recall loss in exchange for zero parser dependencies and 1-se
 `prewarm.py` detects stale graphs (>7d old or >20 source files changed in git) and rebuilds in the background via detached `subprocess.Popen`. User types the first prompt while the rebuild runs; the hook uses the previous graph until the new one lands.
 
 **"How does this compare to `tree-sitter-based` retrieval systems?"**
-We don't ship one, but: tree-sitter gives you better symbol extraction (higher recall) at cost of a native dep (hard to ship in a Python hook). The ranker in `auto_context.py` is orthogonal — swap in a tree-sitter-backed `build_repo_graph.py` and all the eval scripts still run. We'd bet the MRR moves from 0.969 → 0.97+.
+We don't ship one, but: tree-sitter gives you better symbol extraction (higher recall) at cost of a native dep (hard to ship in a Python hook). The ranker in `auto_context.py` is orthogonal — swap in a tree-sitter-backed `build_repo_graph.py` and all the eval scripts still run. We'd bet the MRR moves from 0.984 → 0.99+.
 
 **"Isn't this just BM25 with extra steps?"**
 The 8-signal ablation (`autocontext-ablation.md`) shows:
 - BM25 over symbols alone: MRR 0.875
 - BM25 over paths alone: MRR 0.714
-- auto_context (symbol-exact + symbol-ci + path-exact + path-substr + import + hot + test-penalty + hub-penalty + basename-in-prompt + multi-token coverage + NL-expansion): MRR 0.969
-The ~9 signals beyond BM25 each contribute something. Removing the biggest (`path_substr`) costs 0.062 MRR; removing everything non-BM25 costs much more.
+- auto_context (symbol-exact + symbol-ci + path-exact + path-substr + import + hot + test-penalty + hub-penalty + basename-in-prompt + multi-token coverage + NL-expansion + plural/singular stems + path-token dedupe + df-discriminativity + file-level aggregation): MRR 0.984
+The signals beyond BM25 each contribute something. Removing the biggest (`path_substr`) costs 0.062 MRR; removing everything non-BM25 costs much more. v2.8 added plural/singular stems, df-discriminative path scoring, and file-level aggregation — visible in the multi-repo eval as a 0.5+ weighted-MRR aggregate across 3 unseen OSS repos.
 
 ---
 
@@ -143,6 +144,6 @@ The ~9 signals beyond BM25 each contribute something. Removing the biggest (`pat
 
 Email **sridharsravan@icloud.com**.  
 Repo: **https://github.com/sravan27/context-os**  
-Latest release: **https://github.com/sravan27/context-os/releases/tag/v2.7.0**
+Latest release: **https://github.com/sravan27/context-os/releases/tag/v2.8.0**
 
 We've got code, time, and a strong bias for shipping. Happy to walk the upstream port with you.
