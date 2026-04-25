@@ -2,12 +2,26 @@
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/sravan27/context-os?label=release)](https://github.com/sravan27/context-os/releases/tag/v2.8.0)
+
+> **A 400-line stdlib Python hook that cuts Claude Code token usage by 40.9% on live, real workloads.**
+> Live A/B on 36 real `claude --print` calls: **−40.9% aggregate tokens · 6/6 prompt wins · p = 5.06e-07 · Cohen's d = 1.84**.
+> Cross-repo: **weighted MRR 0.545 vs 0.461** best lexical baseline (+18.2%) across 36 hand-labeled prompts × 3 unseen OSS repos (axios, ripgrep, requests).
+> No embeddings. No server. No model call. MIT.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
+```
+
+**For the Anthropic Claude Code team** ➜ [`docs/PITCH.md`](docs/PITCH.md) (5 min) · [`docs/REVIEW-CHECKLIST.md`](docs/REVIEW-CHECKLIST.md) (20 min reviewer walkthrough) · [`docs/PROPOSAL.md`](docs/PROPOSAL.md) (full methodology + ROI).
+
+---
 
 Context OS is a context-optimization layer for Claude Code — an idempotent, reversible installer that teaches Claude's first turn to open the right file instead of grepping for it. The centerpiece is **`auto_context`**: a UserPromptSubmit hook that performs static-analysis RAG (symbol index + import graph + git-hot files) against a pre-built repo graph, and injects a ranked candidate list into the prompt before Claude sees it.
 
-**Measured on live `claude --print`** (6 prompts × 3 runs per arm, 36 real Claude calls): **−40.9% aggregate tokens, +37.3% median savings per prompt, wins 6/6 prompts, ~$1 total API cost**. Offline eval across Python + TypeScript + Rust fixtures (32 hand-labeled prompts): **MRR 0.938, Precision@3 0.604, +0.375 MRR lift over filename-only baseline**. Zero embeddings, zero server, ~50ms hook latency.
+Offline eval across Python + TypeScript + Rust fixtures (32 hand-labeled prompts): **MRR 0.984, P@3 0.698, +0.109 MRR lift over BM25-symbols, +0.422 over naive-filename**. Dogfood on this repo: **MRR 0.756, top-1 0.600**, beats every lexical baseline. Zero embeddings, zero server, ~50ms hook latency.
 
-Ships alongside: `CLAUDE.md` + `.claudeignore` + `settings.json`, **eleven slash commands** (four query the graph so Claude skips grep, one aggregates token-spend patterns across sessions, one rebuilds the graph), an output style, a statusLine, a Haiku subagent, and **six Python hooks** — including `prewarm`, a SessionStart brief that hands Claude git state + hot files + last-session flags at Turn 1 and auto-rebuilds the graph in the background when it's stale. Not a wrapper, not a proxy, no runtime dependency besides `python3`. **Pitch doc**: [`docs/PROPOSAL.md`](docs/PROPOSAL.md).
+Ships alongside: `CLAUDE.md` + `.claudeignore` + `settings.json`, **eleven slash commands** (four query the graph so Claude skips grep, one aggregates token-spend patterns across sessions, one rebuilds the graph), an output style, a statusLine, a Haiku subagent, and **six Python hooks** — including `prewarm`, a SessionStart brief that hands Claude git state + hot files + last-session flags at Turn 1 and auto-rebuilds the graph in the background when it's stale. Not a wrapper, not a proxy, no runtime dependency besides `python3`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
