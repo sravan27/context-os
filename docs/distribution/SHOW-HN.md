@@ -53,8 +53,6 @@ CI-gated regression floor (9 hard gates) prevents quality drift. 18/18
 adversarial robustness cases pass.
 
 Repo: https://github.com/sravan27/context-os
-Pitch doc for the Claude Code team: docs/PITCH.md
-Reviewer walkthrough (20 min): docs/REVIEW-CHECKLIST.md
 ```
 
 ## First-comment seed (post immediately after submission as OP)
@@ -118,9 +116,9 @@ Happy to answer questions on:
 
 > Symbol extraction is regex-based and ships handlers for Python, TypeScript/JavaScript, Rust, Go. For other languages it falls back to path-only ranking. The cross-repo eval covers Py + JS + Rust on real OSS code. Tree-sitter would push recall higher at the cost of a native dep.
 
-### "Why are you giving this away to Anthropic?"
+### "Why open source it instead of selling it?"
 
-> Because the right place for this is inside `claude` itself, not as a third-party plugin. Discovery is the problem — users who would benefit most (new to Claude Code) won't find a GitHub plugin. The pitch doc (`docs/PITCH.md`) lays out three integration paths from "bundle the hook" to "default-on with telemetry-driven rebuild." MIT-licensed; happy to PR or donate the code.
+> Because it's a 400-line hook that benefits from being read, audited, and forked. The interesting work isn't the code, it's the ranker design and the eval rig — both are CI-gated and reproducible. MIT means anyone (including Anthropic) can pull the patterns into their own tooling without licensing friction.
 
 ### "Latency at 100k files?"
 
@@ -159,7 +157,7 @@ Happy to answer questions on:
   - X thread (see `TWEETS.md`)
   - Anthropic Discord #show-and-tell channel
   - Reddit r/ClaudeAI (see `REDDIT.md`)
-- [ ] Do NOT email Boris Cherny / Cat Wu until the HN post is on the front page — otherwise it looks like spam. Once it's on /front, the email writes itself.
+- [ ] Do not DM any Anthropic employee about this post. If the work is good, the link will reach them organically. Reach-out reads as begging.
 
 ## Anti-patterns to avoid
 
