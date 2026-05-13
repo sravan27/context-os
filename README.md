@@ -12,6 +12,10 @@ No embeddings. No server. No model call. ~50 ms.
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
 ```
 
+![demo](docs/demo.gif)
+
+*60-second demo: graph stats → autocontext block with import counts → cross-repo eval (auto_context 0.545 winning) → 9/9 CI floors PASS. Reproduce with `bash docs/distribution/demo.sh`.*
+
 ## The number
 
 Live A/B on 36 real `claude --print` calls, identical fixture, identical model, only difference is whether the hook is active:

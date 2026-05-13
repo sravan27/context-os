@@ -1,5 +1,7 @@
 # Launch checklist
 
+> **2026-05-13 update.** The original playbook below had seven conditional gates ("only if HN is on /front", "only if HN ≥150 pts"). That's a bug — it gates downstream channels on an upstream signal that the downstream channels are supposed to *create*. The kit sat unposted for 15 days because of it. The operational launch script is now [`SUBMIT.md`](SUBMIT.md): four clickable URLs in order, no gating between independent surfaces. Read SUBMIT.md and post in that order. Keep the strategic notes below for context only.
+
 The order of operations matters more than the content of any single post. This is the playbook.
 
 ## Pre-launch (do today, Saturday 2026-04-25)

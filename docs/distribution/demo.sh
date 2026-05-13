@@ -7,8 +7,9 @@
 #
 # The recording is meant for the README + Show HN + X thread. Don't edit it.
 
-set -euo pipefail
-clear
+set -uo pipefail
+: "${TERM:=xterm}"
+command -v clear >/dev/null 2>&1 && clear 2>/dev/null || printf '\n'
 PS1='$ '
 
 say() { printf '\n%s\n' "$*"; sleep 0.4; }
