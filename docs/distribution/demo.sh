@@ -36,11 +36,10 @@ print(f"  size on disk   : {os.path.getsize('.context-os/repo-graph.json'):,} by
 PY
 
 # 3. What gets injected when Claude submits a prompt
-say "→ Prompt: \"where is the gitignore parser\""
-say "→ What the UserPromptSubmit hook prepends:"
-printf '%s\n' '{"prompt":"where is the gitignore parser"}' \
-  | python3 hooks/python/auto_context.py 2>/dev/null \
-  | head -25
+say "→ Prompt: \"where is the auto_context hook\""
+say "→ What the UserPromptSubmit hook prepends to Claude's input:"
+printf '%s\n' '{"prompt":"where is the auto_context hook"}' \
+  | python3 hooks/python/auto_context.py 2>/dev/null
 
 # 4. Cross-repo eval — 3 unseen OSS repos
 say "→ Cross-repo eval (axios, ripgrep, requests · 36 prompts):"
