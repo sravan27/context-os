@@ -244,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo", default=".", help="Path to the repository to scan.")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of Markdown.")
+    parser.add_argument(
+        "--max-score",
+        type=int,
+        default=None,
+        help="Exit non-zero when the leak score is above this threshold.",
+    )
     args = parser.parse_args(argv)
 
     repo = Path(args.repo).expanduser().resolve()
@@ -256,6 +262,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
     else:
         print(render_markdown(report))
+    if args.max_score is not None and report["score"] > args.max_score:
+        print(
+            f"agent cost leak score {report['score']} exceeds max {args.max_score}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
