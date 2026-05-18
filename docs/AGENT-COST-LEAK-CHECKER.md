@@ -26,7 +26,7 @@ python3 python/agent_cost_leak_check.py --repo . --max-score 40
 
 ## GitHub Actions
 
-Use the published action from this repo:
+Use the published, versioned action from this repo:
 
 ```yaml
 name: Agent cost leak check
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run checker
-        uses: sravan27/context-os@main
+        uses: sravan27/context-os@v2.9.0
         with:
           max-score: "40"
 ```

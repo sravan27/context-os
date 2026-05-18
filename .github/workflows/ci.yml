@@ -310,3 +310,20 @@ jobs:
           test ! -f .claude/commands/relevant.md
           test ! -f .claude/commands/insights.md
           test ! -f .claude/commands/rebuild-graph.md
+
+  agent-cost-leak-action:
+    name: Agent cost leak action
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Composite action smoke test
+        uses: ./
+        with:
+          max-score: "40"
+
+      - name: Report was written
+        run: |
+          test -s agent-cost-leak-report.md
+          grep -q "Agent Cost Leak Check" agent-cost-leak-report.md

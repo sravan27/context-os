@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/sravan27/context-os/actions/workflows/ci.yml/badge.svg)](https://github.com/sravan27/context-os/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/sravan27/context-os?label=release)](https://github.com/sravan27/context-os/releases/tag/v2.8.0)
+[![Release](https://img.shields.io/github/v/release/sravan27/context-os?label=release)](https://github.com/sravan27/context-os/releases/latest)
 
 **Cut Claude Code token usage by 40.9%.** A 400-line Python hook that builds a static graph of your repo (symbols + imports + git-hot files) and injects ranked `file:line` candidates into the prompt before Claude sees it. So the first turn opens the right file instead of grepping for it.
 
@@ -30,10 +30,10 @@ python3 python/agent_cost_leak_check.py --repo . --json
 
 CI recipe: [`docs/AGENT-COST-LEAK-CHECKER.md`](docs/AGENT-COST-LEAK-CHECKER.md).
 
-GitHub Action:
+Versioned GitHub Action:
 
 ```yaml
-- uses: sravan27/context-os@main
+- uses: sravan27/context-os@v2.9.0
   with:
     max-score: "40"
 ```
