@@ -26,7 +26,7 @@ python3 python/agent_cost_leak_check.py --repo . --max-score 40
 
 ## GitHub Actions
 
-Add this to `.github/workflows/agent-cost-leak.yml`:
+Use the published action from this repo:
 
 ```yaml
 name: Agent cost leak check
@@ -42,22 +42,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download checker
-        run: |
-          curl -fsSL \
-            https://raw.githubusercontent.com/sravan27/context-os/main/python/agent_cost_leak_check.py \
-            -o /tmp/agent_cost_leak_check.py
-
       - name: Run checker
-        run: |
-          python3 /tmp/agent_cost_leak_check.py --repo . --max-score 40 | tee agent-cost-leak-report.md
-
-      - name: Add report to job summary
-        if: always()
-        run: cat agent-cost-leak-report.md >> "$GITHUB_STEP_SUMMARY"
+        uses: sravan27/context-os@main
+        with:
+          max-score: "40"
 ```
 
 Start with `--max-score 60` if your repo is large or generated-heavy, then lower the threshold after adding ignore rules, repo guidance, and explicit validation notes.
+
+If you prefer not to pin an action, download the standalone script:
+
+```yaml
+- uses: actions/checkout@v4
+- run: |
+    curl -fsSL \
+      https://raw.githubusercontent.com/sravan27/context-os/main/python/agent_cost_leak_check.py \
+      -o /tmp/agent_cost_leak_check.py
+    python3 /tmp/agent_cost_leak_check.py --repo . --max-score 40
+```
 
 ## Private Audit
 

@@ -1,0 +1,43 @@
+name: "AI Agent Cost Leak Check"
+description: "Scan a repository for coding-agent cost-leak signals before Claude Code, Codex, or Cursor waste context."
+author: "sravan27"
+
+branding:
+  icon: "activity"
+  color: "blue"
+
+inputs:
+  repo:
+    description: "Repository path to scan."
+    required: false
+    default: "."
+  max-score:
+    description: "Fail the workflow when the leak score exceeds this value. Leave empty to report only."
+    required: false
+    default: ""
+  json:
+    description: "Emit JSON instead of Markdown."
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run agent cost leak check
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        args=(--repo "${{ inputs.repo }}")
+        if [ "${{ inputs.json }}" = "true" ]; then
+          args+=(--json)
+        fi
+        if [ -n "${{ inputs.max-score }}" ]; then
+          args+=(--max-score "${{ inputs.max-score }}")
+        fi
+
+        python3 "$GITHUB_ACTION_PATH/python/agent_cost_leak_check.py" "${args[@]}" | tee agent-cost-leak-report.md
+
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ "${{ inputs.json }}" != "true" ]; then
+          cat agent-cost-leak-report.md >> "$GITHUB_STEP_SUMMARY"
+        fi

@@ -30,6 +30,14 @@ python3 python/agent_cost_leak_check.py --repo . --json
 
 CI recipe: [`docs/AGENT-COST-LEAK-CHECKER.md`](docs/AGENT-COST-LEAK-CHECKER.md).
 
+GitHub Action:
+
+```yaml
+- uses: sravan27/context-os@main
+  with:
+    max-score: "40"
+```
+
 ## The number
 
 Live A/B on 36 real `claude --print` calls, identical fixture, identical model, only difference is whether the hook is active:
