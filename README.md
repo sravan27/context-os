@@ -22,6 +22,12 @@ If your team is already spending heavily on Claude Code, Codex, Cursor, or other
 
 The open-source hook stays MIT and free. The paid audit is for teams that want the same measurement discipline applied to their own repo, prompts, and agent workflows.
 
+Quick local preview:
+
+```bash
+python3 python/agent_cost_leak_check.py --repo . --json
+```
+
 ## The number
 
 Live A/B on 36 real `claude --print` calls, identical fixture, identical model, only difference is whether the hook is active:
