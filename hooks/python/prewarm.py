@@ -240,18 +240,31 @@ def main():
     except ValueError:
         max_age, max_changed = 7, 20
     fresh = graph_freshness(cwd)
-    stale, reason = is_stale(fresh, max_age, max_changed)
-    if stale:
-        autobuild = os.environ.get("CONTEXT_OS_GRAPH_AUTOBUILD") != "0"
+    autobuild = os.environ.get("CONTEXT_OS_GRAPH_AUTOBUILD") != "0"
+    if fresh is None:
         if autobuild and spawn_rebuild(cwd):
             sections.append(
-                f"Graph: {reason} — rebuilding in background. "
-                f"Auto-context will use the fresh graph next session."
+                "Graph: no `.context-os/repo-graph.json` found — building "
+                "one in background. Auto-context starts working next turn."
             )
         else:
             sections.append(
-                f"Graph: {reason} — run `/rebuild-graph` to refresh."
+                "Graph: no `.context-os/repo-graph.json` found — run "
+                "`python3 hooks/python/build_repo_graph.py .` to enable "
+                "auto-context."
             )
+    else:
+        stale, reason = is_stale(fresh, max_age, max_changed)
+        if stale:
+            if autobuild and spawn_rebuild(cwd):
+                sections.append(
+                    f"Graph: {reason} — rebuilding in background. "
+                    f"Auto-context will use the fresh graph next session."
+                )
+            else:
+                sections.append(
+                    f"Graph: {reason} — run `/rebuild-graph` to refresh."
+                )
 
     # 4. Hot files from graph
     hot = graph_hot(cwd)

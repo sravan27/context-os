@@ -1,6 +1,6 @@
 # auto_context robustness tests
 
-_Generated 2026-04-22T13:47:28+00:00 · 18/18 cases pass_
+_Generated 2026-05-19T13:16:50+00:00 · 18/18 cases pass_
 
 ## Why this exists
 
@@ -17,24 +17,24 @@ at the hook and asserts:
 
 | # | case | status | exit | elapsed | stderr |
 |---|---|:---:|---:|---:|---|
-| 1 | `empty-dir` | ✓ | 0 | 20.7ms | — |
-| 2 | `no-graph` | ✓ | 0 | 21.1ms | — |
-| 3 | `corrupt-json` | ✓ | 0 | 21.1ms | — |
-| 4 | `empty-graph` | ✓ | 0 | 21.3ms | — |
-| 5 | `partial-graph` | ✓ | 0 | 20.1ms | — |
-| 6 | `unicode-paths` | ✓ | 0 | 21.5ms | — |
-| 7 | `huge-graph` | ✓ | 0 | 68.3ms | — |
-| 8 | `empty-prompt` | ✓ | 0 | 21.1ms | — |
-| 9 | `whitespace-prompt` | ✓ | 0 | 20.6ms | — |
-| 10 | `mega-prompt` | ✓ | 0 | 21.3ms | — |
-| 11 | `adversarial-regex` | ✓ | 0 | 21.0ms | — |
-| 12 | `null-bytes-prompt` | ✓ | 0 | 20.9ms | — |
-| 13 | `unicode-prompt` | ✓ | 0 | 21.3ms | — |
-| 14 | `path-injection` | ✓ | 0 | 20.9ms | — |
-| 15 | `ablate-all` | ✓ | 0 | 20.5ms | — |
-| 16 | `disabled` | ✓ | 0 | 20.9ms | — |
-| 17 | `stdin-not-json` | ✓ | 0 | 20.6ms | — |
-| 18 | `stdin-empty` | ✓ | 0 | 20.7ms | — |
+| 1 | `empty-dir` | ✓ | 0 | 27.4ms | — |
+| 2 | `no-graph` | ✓ | 0 | 28.4ms | — |
+| 3 | `corrupt-json` | ✓ | 0 | 28.6ms | — |
+| 4 | `empty-graph` | ✓ | 0 | 26.6ms | — |
+| 5 | `partial-graph` | ✓ | 0 | 27.2ms | — |
+| 6 | `unicode-paths` | ✓ | 0 | 28.9ms | — |
+| 7 | `huge-graph` | ✓ | 0 | 85.7ms | — |
+| 8 | `empty-prompt` | ✓ | 0 | 27.8ms | — |
+| 9 | `whitespace-prompt` | ✓ | 0 | 27.1ms | — |
+| 10 | `mega-prompt` | ✓ | 0 | 28.4ms | — |
+| 11 | `adversarial-regex` | ✓ | 0 | 27.5ms | — |
+| 12 | `null-bytes-prompt` | ✓ | 0 | 28.2ms | — |
+| 13 | `unicode-prompt` | ✓ | 0 | 27.1ms | — |
+| 14 | `path-injection` | ✓ | 0 | 26.6ms | — |
+| 15 | `ablate-all` | ✓ | 0 | 27.0ms | — |
+| 16 | `disabled` | ✓ | 0 | 27.7ms | — |
+| 17 | `stdin-not-json` | ✓ | 0 | 27.0ms | — |
+| 18 | `stdin-empty` | ✓ | 0 | 28.2ms | — |
 
 ## Case details
 
@@ -44,7 +44,7 @@ Hook invoked in an empty directory with no graph and no source.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.7ms
+- Elapsed: 27.4ms
 
 ### `no-graph`
 
@@ -52,7 +52,7 @@ Source files exist but `.context-os/repo-graph.json` is missing.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.1ms
+- Elapsed: 28.4ms
 
 ### `corrupt-json`
 
@@ -60,7 +60,7 @@ Source files exist but `.context-os/repo-graph.json` is missing.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.1ms
+- Elapsed: 28.6ms
 
 ### `empty-graph`
 
@@ -68,7 +68,7 @@ Graph JSON parses but is an empty object `{}`.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.3ms
+- Elapsed: 26.6ms
 
 ### `partial-graph`
 
@@ -76,7 +76,7 @@ Graph has only `files`, missing `symbol_index`/`imported_by`/`hot_files`.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.1ms
+- Elapsed: 27.2ms
 
 ### `unicode-paths`
 
@@ -84,7 +84,7 @@ Graph has unicode file paths, symbols with accents, emoji modules.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.5ms
+- Elapsed: 28.9ms
 
 ### `huge-graph`
 
@@ -92,7 +92,7 @@ Graph with 5,000 files and 5,000 symbols. Latency SLA applies.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 68.3ms
+- Elapsed: 85.7ms
 - stdout (first 200 chars):
 
   ```
@@ -108,7 +108,7 @@ Prompt is the empty string.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.1ms
+- Elapsed: 27.8ms
 
 ### `whitespace-prompt`
 
@@ -116,7 +116,7 @@ Prompt is pure whitespace.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.6ms
+- Elapsed: 27.1ms
 
 ### `mega-prompt`
 
@@ -124,7 +124,7 @@ Prompt is 100,000 characters long.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.3ms
+- Elapsed: 28.4ms
 
 ### `adversarial-regex`
 
@@ -132,7 +132,7 @@ Prompt contains regex metacharacters and long backslash sequences.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.0ms
+- Elapsed: 27.5ms
 
 ### `null-bytes-prompt`
 
@@ -140,7 +140,7 @@ Prompt contains NUL bytes and control chars.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.9ms
+- Elapsed: 28.2ms
 
 ### `unicode-prompt`
 
@@ -148,7 +148,7 @@ Prompt is in multiple languages and emoji.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 21.3ms
+- Elapsed: 27.1ms
 - stdout (first 200 chars):
 
   ```
@@ -164,7 +164,7 @@ Prompt contains shell metacharacters that must not be expanded.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.9ms
+- Elapsed: 26.6ms
 
 ### `ablate-all`
 
@@ -172,7 +172,7 @@ All 8 ranker signals disabled via env var. Should still exit clean.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.5ms
+- Elapsed: 27.0ms
 
 ### `disabled`
 
@@ -180,7 +180,7 @@ All 8 ranker signals disabled via env var. Should still exit clean.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.9ms
+- Elapsed: 27.7ms
 
 ### `stdin-not-json`
 
@@ -188,7 +188,7 @@ Hook invoked with non-JSON stdin.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.6ms
+- Elapsed: 27.0ms
 
 ### `stdin-empty`
 
@@ -196,7 +196,7 @@ Hook invoked with completely empty stdin.
 
 - Status: pass
 - Exit: 0
-- Elapsed: 20.7ms
+- Elapsed: 28.2ms
 
 ## Reproduce
 

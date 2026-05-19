@@ -6,6 +6,11 @@ Short version: **nothing leaves your machine. No network, no telemetry, no opt-o
 
 ## What runs, where, and when
 
+The official plugin-directory package enables only the lightweight
+`SessionStart` and `UserPromptSubmit` hooks. The broader local installer in
+`setup.sh` can add extra guards (`PreToolUse`, `PostToolUse`, `Stop`, and
+`PreCompact`) when a user explicitly opts into the full project setup.
+
 | Component | Trigger | Where | What it reads | What it writes | Network? |
 |---|---|---|---|---|:-:|
 | `build_repo_graph.py` | Install + `/refresh-graph`; background on staleness | Your machine, as your user | Source files in repo (ext allowlist) + `git log --name-only --since=90.days` | `.context-os/repo-graph.json` in repo root | No |
