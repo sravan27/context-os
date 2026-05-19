@@ -22,13 +22,20 @@ If your team is already spending heavily on Claude Code, Codex, Cursor, or other
 
 The open-source hook stays MIT and free. The paid audit is for teams that want the same measurement discipline applied to their own repo, prompts, and agent workflows.
 
+What the paid sprint ships:
+
+- a private repo scorecard using the same leak signals as the Action
+- a short report on the highest-cost agent loops and file-noise sources
+- one concrete CI, ignore-rule, or repo-guidance patch where the fix is clear
+- a handoff note your team can reuse when running Claude Code, Codex, Cursor, or internal agents
+
 Quick local preview:
 
 ```bash
 python3 python/agent_cost_leak_check.py --repo . --json
 ```
 
-CI recipe: [`docs/AGENT-COST-LEAK-CHECKER.md`](docs/AGENT-COST-LEAK-CHECKER.md).
+CI recipe: [`docs/AGENT-COST-LEAK-CHECKER.md`](docs/AGENT-COST-LEAK-CHECKER.md). For public intake without sharing private code, use the [private audit request template](https://github.com/sravan27/context-os/issues/new?template=private_audit.yml).
 
 Versioned GitHub Action:
 

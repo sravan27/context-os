@@ -1,0 +1,46 @@
+name: Private audit request
+description: Ask about a paid 48-hour agent cost leak audit. Do not paste private code, secrets, or transcripts.
+title: "Private audit request: "
+labels: ["paid-audit"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this only for a short public intake note. Do not paste private code, secrets, keys, customer data, or private agent transcripts.
+
+        Paid audit page: https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html
+  - type: dropdown
+    id: repo-kind
+    attributes:
+      label: Repo/workflow type
+      options:
+        - Private product repo
+        - Monorepo
+        - AI-generated app
+        - Internal agent workflow
+        - GitHub Actions / CI agent gate
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: pain
+    attributes:
+      label: What is leaking time or tokens?
+      description: Describe symptoms only. Keep private details out.
+      placeholder: "Example: Claude/Codex keeps reading generated files, repeats repo exploration, or burns 10+ turns finding the right module."
+    validations:
+      required: true
+  - type: input
+    id: deadline
+    attributes:
+      label: Desired turnaround
+      placeholder: "48 hours / this week / before launch"
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: What would a good result look like?
+      placeholder: "Example: a score under 40 in CI, a private report, and one merged patch adding ignore rules and agent guidance."
+    validations:
+      required: true

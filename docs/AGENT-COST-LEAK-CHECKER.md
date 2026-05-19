@@ -66,3 +66,7 @@ If you prefer not to pin an action, download the standalone script:
 The paid audit applies the same idea to private repo structure, prompts, and real agent transcripts, then ships a report plus one concrete fix path:
 
 https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html
+
+For public intake without sharing private code or secrets:
+
+https://github.com/sravan27/context-os/issues/new?template=private_audit.yml

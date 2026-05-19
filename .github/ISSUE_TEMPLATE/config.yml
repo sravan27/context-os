@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Paid private repo audit
+    url: https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html
+    about: 48-hour private audit for teams spending real money on Claude Code, Codex, Cursor, or internal coding agents.
   - name: Measure your own savings first
-    url: https://github.com/sravan27/context-os#see-what-youd-save-no-install
-    about: Run `curl ... | bash -s -- --measure` to see token savings in your repo before filing an issue.
+    url: https://github.com/sravan27/context-os#private-repo-audit
+    about: Run the local preview or GitHub Action before filing an issue.
