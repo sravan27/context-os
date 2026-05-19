@@ -8,6 +8,8 @@
 
 No embeddings. No server. No model call. ~50 ms.
 
+Need this applied to a private repo this week? [Fund the $1,000 48-hour implementation sprint](https://buy.polar.sh/polar_cl_z0eLsPUJeMwrcNs4MQPAQbKIM3Rbdb8fLDgVj2RZcmr) or read the [audit scope](https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html). The OSS tool stays free; the sprint is for teams that want a private report, CI leak gate, and one concrete repo/workflow patch.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
 ```
