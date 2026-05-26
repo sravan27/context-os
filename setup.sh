@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.8.0"
+VERSION="2.9.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -263,7 +263,7 @@ if [ "${1:-}" = "--status" ]; then
     check fail "statusLine" "not installed"
   fi
   if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/file_size_guard.py ] && [ -f .claude/hooks/session_profile.py ] && [ -f .claude/hooks/auto_context.py ] && [ -f .claude/hooks/prewarm.py ]; then
-    check ok "python hooks" "6 installed (dedup, loop, size, profiler, autocontext, prewarm)"
+    check ok "python hooks" "7 installed (dedup, loop, size, profiler, autocontext, prewarm, savings)"
   else
     check fail "python hooks" "not fully installed"
   fi
@@ -345,7 +345,7 @@ try:
 except: pass
 " 2>/dev/null && echo "  removed allowedTools from settings.json"
   fi
-  for cmd in compact context ship cheap find deps hot warm-clear relevant insights rebuild-graph; do
+  for cmd in compact context ship cheap find deps hot warm-clear relevant insights rebuild-graph savings; do
     [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
   done
   for agent in explorer; do
@@ -353,7 +353,7 @@ except: pass
   done
   [ -f .claude/output-styles/terse.md ] && rm .claude/output-styles/terse.md && echo "  removed /.claude/output-styles/terse.md"
   [ -f .claude/statusline.sh ] && rm .claude/statusline.sh && echo "  removed /.claude/statusline.sh"
-  for h in dedup_guard.py loop_guard.py file_size_guard.py session_profile.py auto_context.py prewarm.py; do
+  for h in dedup_guard.py loop_guard.py file_size_guard.py session_profile.py auto_context.py prewarm.py savings_tracker.py; do
     [ -f ".claude/hooks/$h" ] && rm ".claude/hooks/$h" && echo "  removed .claude/hooks/$h"
   done
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
@@ -1160,7 +1160,24 @@ Run `python3 .context-os/build_repo_graph.py .` from the repo root via Bash. The
 If the builder fails, show its stderr and tell the user to check Python 3 is on PATH.
 CMDEOF
 
-echo "  [$STEP/$TOTAL] installed 11 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights /rebuild-graph)"
+cat > .claude/commands/savings.md << 'CMDEOF'
+---
+description: Show your context-os token savings — all-time, this week, streak, and a shareable card
+---
+
+Run the savings report and show the user the output verbatim:
+
+```bash
+python3 .context-os/scripts/savings_report.py --root "$(pwd)" 2>/dev/null \
+  || echo "No receipts yet — context-os logs savings as you work. Check back after a few prompts."
+```
+
+Print the result exactly as-is (it's a pre-formatted dashboard). Do not summarize
+or re-format. The shareable card alone is available with `--card-only`; raw
+numbers with `--json`.
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 12 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights /rebuild-graph /savings)"
 
 # ============================================================================
 # STEP 7: Haiku subagent — 15x cheaper than Opus for exploration
@@ -1271,10 +1288,31 @@ if [ -f "$CWD/CLAUDE.md" ] && grep -q 'context-os:start' "$CWD/CLAUDE.md" 2>/dev
   COS="context-os ✓"
 fi
 
-# Format: model · branch · context-os status
+# Live savings meter — reads the cached aggregate the Stop hook maintains.
+# One tiny file read; compact k/M formatting; silent until there are receipts.
+SAVINGS=""
+TOTAL_FILE="$CWD/.context-os/savings/total.json"
+if [ -f "$TOTAL_FILE" ]; then
+  SAVINGS=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open('$TOTAL_FILE')); t=d.get('tokens_saved',0) or 0
+    if t<=0: sys.exit(0)
+    s=d.get('streak',0) or 0
+    v=(f'{t/1_000_000:.1f}M' if t>=1_000_000 else f'{t//1000}k' if t>=1000 else str(t))
+    out='💰 '+v+' saved'
+    if s>=3: out+=f' · {s}d🔥'
+    print(out)
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+fi
+
+# Format: model · branch · context-os status · savings
 OUT="$MODEL"
 [ -n "$BRANCH" ] && OUT="$OUT · $BRANCH"
 [ -n "$COS" ] && OUT="$OUT · $COS"
+[ -n "$SAVINGS" ] && OUT="$OUT · $SAVINGS"
 printf '%s' "$OUT"
 SLEOF
 chmod +x .claude/statusline.sh
@@ -2360,6 +2398,380 @@ if __name__ == "__main__":
 CONTEXT_OS_PREWARM_EOF
 chmod +x "$HOOK_DIR/prewarm.py"
 
+# --- savings_tracker.py (Stop: turn invisible savings into a visible number) -
+cat > "$HOOK_DIR/savings_tracker.py" <<'CONTEXT_OS_SAVINGS_EOF'
+#!/usr/bin/env python3
+"""Stop hook: credits context-os for files Claude opened that it surfaced,
+estimates tokens saved, maintains a personal ledger + cached total, and
+prints a one-line receipt. Pairs with auto_context's suggestion log.
+Fail-open on every error. Disable with CONTEXT_OS_SAVINGS=0."""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+SAVINGS_DIR_NAME = ".context-os/savings"
+DEFAULT_TOKENS_PER_HIT = 8000
+MILESTONES = [100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000,
+              10_000_000, 25_000_000, 50_000_000, 100_000_000]
+TOKENS_PER_PROMPT = 50_000
+
+
+def _abspath(p, cwd):
+    if not p:
+        return ""
+    try:
+        return os.path.normpath(p if os.path.isabs(p) else os.path.join(cwd, p))
+    except Exception:
+        return p
+
+
+def _matches(s, reads, read_suffixes):
+    if s in reads:
+        return True
+    tail = s.lstrip("/")
+    for r in reads:
+        if r.endswith("/" + tail) or tail.endswith("/" + r.lstrip("/")):
+            return True
+    base = os.path.basename(s)
+    return bool(base and "/" in s and base in read_suffixes)
+
+
+def parse_transcript_reads(path):
+    reads, turns, total = set(), 0, 0
+    try:
+        lines = Path(path).open("r", encoding="utf-8", errors="replace").readlines()
+    except OSError:
+        return reads, turns, total
+    for line in lines:
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = evt.get("message") or {}
+        usage = msg.get("usage") or evt.get("usage") or {}
+        if usage:
+            turns += 1
+            total += (usage.get("input_tokens", 0) or 0)
+            total += (usage.get("output_tokens", 0) or 0)
+            total += (usage.get("cache_creation_input_tokens", 0) or 0)
+        content = msg.get("content") or []
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_use" \
+                        and b.get("name") == "Read":
+                    fp = (b.get("input") or {}).get("file_path", "")
+                    if fp:
+                        reads.add(os.path.normpath(fp))
+    return reads, turns, total
+
+
+def read_suggestions(savings_dir, session_id, cwd):
+    suggested, n = set(), 0
+    f = savings_dir / "suggestions.jsonl"
+    if not f.exists():
+        return suggested, n
+    try:
+        for line in f.open("r", encoding="utf-8", errors="replace"):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if session_id and rec.get("session") != session_id:
+                continue
+            n += 1
+            for p in rec.get("files", []):
+                ap = _abspath(p, cwd)
+                if ap:
+                    suggested.add(ap)
+    except OSError:
+        pass
+    return suggested, n
+
+
+def load_total(savings_dir):
+    try:
+        return json.loads((savings_dir / "total.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"tokens_saved": 0, "hits": 0, "sessions": 0,
+                "first_date": None, "last_date": None, "streak": 0,
+                "milestone": 0}
+
+
+def compute_streak(prev, today):
+    last = prev.get("last_date")
+    streak = prev.get("streak", 0) or 0
+    if last == today:
+        return max(1, streak)
+    if last is None:
+        return 1
+    try:
+        from datetime import date
+        ly, lm, ld = (int(x) for x in last.split("-"))
+        ty, tm, td = (int(x) for x in today.split("-"))
+        gap = (date(ty, tm, td) - date(ly, lm, ld)).days
+    except Exception:
+        return 1
+    if gap == 1:
+        return streak + 1
+    if gap <= 0:
+        return max(1, streak)
+    return 1
+
+
+def main():
+    if os.environ.get("CONTEXT_OS_SAVINGS") == "0":
+        return 0
+    try:
+        per_hit = int(os.environ.get("CONTEXT_OS_SAVINGS_PER_HIT",
+                                     str(DEFAULT_TOKENS_PER_HIT)))
+    except ValueError:
+        per_hit = DEFAULT_TOKENS_PER_HIT
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    transcript = payload.get("transcript_path")
+    session_id = payload.get("session_id", "") or ""
+    cwd = payload.get("cwd") or os.getcwd()
+    if not transcript or not os.path.exists(transcript):
+        return 0
+    savings_dir = Path(cwd) / SAVINGS_DIR_NAME
+    suggested, n_sugg = read_suggestions(savings_dir, session_id, cwd)
+    if n_sugg == 0:
+        return 0
+    reads, turns, total_tokens = parse_transcript_reads(transcript)
+    read_suffixes = {os.path.basename(r) for r in reads}
+    hits = [s for s in suggested if _matches(s, reads, read_suffixes)]
+    n_hits = len(hits)
+    tokens_saved = n_hits * per_hit
+    today = time.strftime("%Y-%m-%d")
+    prev = load_total(savings_dir)
+    prev_saved = prev.get("tokens_saved", 0) or 0
+    new_total = prev_saved + tokens_saved
+    streak = compute_streak(prev, today)
+    savings_dir.mkdir(parents=True, exist_ok=True)
+    record = {"ts": time.time(), "date": today, "session": session_id[:12],
+              "suggestions": n_sugg, "suggested_files": len(suggested),
+              "hits": n_hits, "reads": len(reads), "turns": turns,
+              "session_tokens": total_tokens, "tokens_saved": tokens_saved,
+              "per_hit": per_hit}
+    try:
+        with (savings_dir / "ledger.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        return 0
+    crossed = None
+    for m in MILESTONES:
+        if prev_saved < m <= new_total:
+            crossed = m
+    total = {"tokens_saved": new_total,
+             "hits": (prev.get("hits", 0) or 0) + n_hits,
+             "sessions": (prev.get("sessions", 0) or 0) + 1,
+             "first_date": prev.get("first_date") or today,
+             "last_date": today, "streak": streak,
+             "milestone": crossed or prev.get("milestone", 0),
+             "usd_per_mtok": 6.0}
+    try:
+        (savings_dir / "total.json").write_text(json.dumps(total))
+    except OSError:
+        pass
+    if n_hits > 0:
+        runway = tokens_saved / TOKENS_PER_PROMPT
+        usd = new_total / 1_000_000 * 6.0
+        print(f"[context-os] receipt: {n_hits} hit"
+              f"{'s' if n_hits != 1 else ''} -> ~{tokens_saved:,} tokens saved "
+              f"(~{runway:.1f} prompts of runway). All-time: {new_total:,} tok "
+              f"(~${usd:,.2f}) - {streak}-day streak. /savings for details.",
+              file=sys.stderr)
+    if crossed:
+        print(f"[context-os] *** MILESTONE: {crossed:,} tokens saved with "
+              f"context-os. Share your card: /savings ***", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_SAVINGS_EOF
+chmod +x "$HOOK_DIR/savings_tracker.py"
+
+# --- savings_report.py (/savings backend) → .context-os/scripts/ ------------
+mkdir -p .context-os/scripts
+cat > .context-os/scripts/savings_report.py <<'CONTEXT_OS_SAVINGS_REPORT_EOF'
+#!/usr/bin/env python3
+"""Backend for /savings. Reads the ledger savings_tracker.py writes and prints
+a dashboard + shareable card. Fail-open. See hooks/savings_tracker.py."""
+import argparse
+import json
+import os
+import sys
+from collections import defaultdict
+
+SAVINGS_DIR_NAME = ".context-os/savings"
+TOKENS_PER_PROMPT = 50_000
+USD_PER_MTOK = 6.0
+
+
+def load_ledger(root):
+    path = os.path.join(root, SAVINGS_DIR_NAME, "ledger.jsonl")
+    rows = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        pass
+    return rows
+
+
+def _bar(frac, width=24):
+    frac = max(0.0, min(1.0, frac))
+    return "#" * int(round(frac * width)) + "-" * (width - int(round(frac * width)))
+
+
+def aggregate(rows):
+    tot_saved = sum(r.get("tokens_saved", 0) or 0 for r in rows)
+    tot_hits = sum(r.get("hits", 0) or 0 for r in rows)
+    tot_sugg = sum(r.get("suggestions", 0) or 0 for r in rows)
+    tot_sugg_files = sum(r.get("suggested_files", 0) or 0 for r in rows)
+    by_day = defaultdict(int)
+    for r in rows:
+        by_day[r.get("date", "?")] += r.get("tokens_saved", 0) or 0
+    days = sorted(d for d in by_day if d and d != "?")
+    streak = 0
+    if days:
+        from datetime import date, timedelta
+        try:
+            cur = date.fromisoformat(days[-1])
+            present = {date.fromisoformat(d) for d in days}
+            while cur in present:
+                streak += 1
+                cur = cur - timedelta(days=1)
+        except ValueError:
+            streak = len(days)
+    week_saved = 0
+    if days:
+        from datetime import date, timedelta
+        try:
+            today = date.fromisoformat(days[-1])
+            wk = today - timedelta(days=6)
+            for d, v in by_day.items():
+                try:
+                    if date.fromisoformat(d) >= wk:
+                        week_saved += v
+                except ValueError:
+                    pass
+        except ValueError:
+            pass
+    return {"tokens_saved": tot_saved, "hits": tot_hits,
+            "suggestions": tot_sugg, "suggested_files": tot_sugg_files,
+            "sessions": len(rows), "days_active": len(days), "streak": streak,
+            "first_day": days[0] if days else None,
+            "last_day": days[-1] if days else None, "week_saved": week_saved,
+            "by_day": dict(by_day),
+            "hit_rate": (tot_hits / tot_sugg_files) if tot_sugg_files else 0.0}
+
+
+def make_card(a):
+    saved = a["tokens_saved"]
+    usd = saved / 1_000_000 * USD_PER_MTOK
+    runway = saved / TOKENS_PER_PROMPT
+    W = 45
+
+    def row(s):
+        return "| " + s.ljust(W - 2) + " |"
+
+    def center(s):
+        return "|" + s.center(W) + "|"
+
+    return "\n".join([
+        "+" + "-" * W + "+",
+        center("context-os - receipts"),
+        "+" + "-" * W + "+",
+        row(f"{saved:,} tokens saved"),
+        row(f"~${usd:,.2f}  -  ~{runway:.0f} prompts of runway"),
+        row(f"{a['hits']:,} hits over {a['sessions']:,} sessions"),
+        row(f"{a['streak']}-day streak  -  {a['hit_rate']*100:.0f}% hit-rate"),
+        "+" + "-" * W + "+",
+        row("github.com/sravan27/context-os - MIT"),
+        "+" + "-" * W + "+",
+    ])
+
+
+def make_report(a):
+    saved = a["tokens_saved"]
+    usd = saved / 1_000_000 * USD_PER_MTOK
+    runway = saved / TOKENS_PER_PROMPT
+    week_usd = a["week_saved"] / 1_000_000 * USD_PER_MTOK
+    runway_str = f"{runway:,.1f}" if runway < 10 else f"{runway:,.0f}"
+    out = ["", "  context-os - your savings", "  " + "-" * 44, "",
+           f"  All-time saved   {saved:>13,} tokens  (~${usd:,.2f})",
+           f"  This week        {a['week_saved']:>13,} tokens  (~${week_usd:,.2f})",
+           f"  Runway bought    {('~' + runway_str):>13} prompts before the rate window",
+           "",
+           f"  Hits             {a['hits']:>13,}  (files context-os surfaced that you opened)",
+           f"  Hit-rate         {a['hit_rate']*100:>12.0f}%  of suggested files were used  {_bar(a['hit_rate'])}",
+           f"  Sessions         {a['sessions']:>13,}  over {a['days_active']} active days",
+           f"  Streak           {a['streak']:>13}  consecutive days {'(hot)' if a['streak'] >= 3 else ''}"]
+    if a["first_day"]:
+        out.append(f"  Since            {a['first_day']:>13}")
+    out.append("")
+    days = sorted(d for d in a["by_day"] if d and d != "?")
+    if days:
+        tail = days[-14:]
+        vals = [a["by_day"][d] for d in tail]
+        mx = max(vals) or 1
+        spark = "".join(" .:-=+*#@"[min(8, int(v / mx * 8))] for v in vals)
+        out.append(f"  Last {len(tail):>2} days     {spark}")
+        out.append(f"                   {tail[0]} -> {tail[-1]}")
+        out.append("")
+    out.append("  Shareable card (copy/paste anywhere):")
+    out.append("")
+    for ln in make_card(a).splitlines():
+        out.append("  " + ln)
+    out += ["", "  Note: tokens-saved is a conservative estimate (8k/hit vs ~21k",
+            "  measured in the live A/B). It under-claims on purpose.", ""]
+    return "\n".join(out)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=os.getcwd())
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--card-only", action="store_true")
+    args = ap.parse_args()
+    rows = load_ledger(args.root)
+    if not rows:
+        print("\n  context-os - your savings\n  " + "-" * 44 + "\n\n"
+              "  No receipts yet. context-os logs a receipt every time Claude\n"
+              "  opens a file it surfaced for you. Run a few 'where is X'\n"
+              "  prompts and check back after the next Stop event.\n")
+        return 0
+    a = aggregate(rows)
+    if args.json:
+        print(json.dumps(a, indent=2))
+    elif args.card_only:
+        print(make_card(a))
+    else:
+        print(make_report(a))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_SAVINGS_REPORT_EOF
+chmod +x .context-os/scripts/savings_report.py
+
 # Merge Python hooks into settings.local.json. Additive merge — preserves any
 # existing hooks (e.g. from the optional binary-based step below).
 PY_ABS="$(cd "$HOOK_DIR" && pwd)"
@@ -2380,7 +2792,8 @@ PYTHON_HOOKS=$(cat <<HOOKJSON
       {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/prewarm.py'", "timeout": 3}]}
     ],
     "Stop": [
-      {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/session_profile.py'", "timeout": 15}]}
+      {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/session_profile.py'", "timeout": 15}]},
+      {"matcher": "", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/savings_tracker.py'", "timeout": 15}]}
     ]
   }
 }
@@ -2404,10 +2817,10 @@ for event, entries in new_hooks.items():
             existing['hooks'][event].append(entry)
             seen.add(sig)
 json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
-" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 6 Python hooks (dedup, loop, size, profiler, autocontext, prewarm)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
+" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 7 Python hooks (dedup, loop, size, profiler, autocontext, prewarm, savings)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
 else
   printf '%s' "$PYTHON_HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$PYTHON_HOOKS" > "$SETTINGS_LOCAL"
-  echo "  [$STEP/$TOTAL] installed 6 Python hooks (dedup, loop, size, profiler, autocontext, prewarm)"
+  echo "  [$STEP/$TOTAL] installed 7 Python hooks (dedup, loop, size, profiler, autocontext, prewarm, savings)"
 fi
 
 # ============================================================================

@@ -1,7 +1,7 @@
 {
   "name": "context-os",
-  "description": "Claude Code context optimizer. Builds a local static repo graph, injects ranked file:line candidates through a UserPromptSubmit hook, and adds a SessionStart prewarm brief. No embeddings, no server, no telemetry. Measured live A/B: 40.9% aggregate token reduction across 36 Claude Code calls.",
-  "version": "2.9.1",
+  "description": "Claude Code context optimizer. Builds a local static repo graph, injects ranked file:line candidates through a UserPromptSubmit hook, and adds a SessionStart prewarm brief. No embeddings, no server, no telemetry. Measured live A/B: 40.9% aggregate token reduction across 36 Claude Code calls. v2.9 Receipts: a Stop hook + /savings turn the invisible savings into a live statusLine meter, a day-streak, a dollar figure, and a shareable card.",
+  "version": "2.9.2",
   "author": {
     "name": "sravan27",
     "url": "https://github.com/sravan27"

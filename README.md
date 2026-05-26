@@ -82,6 +82,34 @@ crates/ignore/src/gitignore.rs:118 · matched (fn) · imports: …
 claude: Read crates/ignore/src/gitignore.rs → done
 ```
 
+## Your savings, made visible
+
+Saving 40% silently builds no habit. So context-os keeps a receipt. Every time
+Claude opens a file the hook surfaced, that's a *hit* — an exploration it
+skipped. A Stop hook tallies them; the statusLine shows a live meter; `/savings`
+shows the rest:
+
+```
+💰 2.3M saved · 5d🔥        ← statusLine, every prompt
+
+$ /savings
+  All-time saved      2,340,000 tokens  (~$14.04)
+  This week             612,000 tokens  (~$3.67)
+  Runway bought            ~47 prompts before the rate window
+  Hits                        412  (files context-os surfaced that you opened)
+  Hit-rate                    71%  ███████████████████░░░░░
+  Streak                        5  consecutive days 🔥
+  ╭─────────────────────────────────────────────╮
+  │            context-os · receipts            │
+  │  2,340,000 tokens saved                     │
+  │  ~$14.04  ·  ~47 prompts of runway          │
+  │  412 hits over 38 sessions                  │
+  ╰─────────────────────────────────────────────╯   ← copy/paste anywhere
+```
+
+Local-only, no phone-home. Tokens-saved is conservative (8k/hit vs the ~21k
+measured in the live A/B) — it under-claims on purpose.
+
 ## Install
 
 Per-project:
@@ -106,9 +134,9 @@ python3 python/evals/runners/multi_repo_eval.py  # cross-repo eval, ~2 min
 
 ## What it installs
 
-`setup.sh` writes 28 techniques across `CLAUDE.md`, `.claudeignore`, `.claude/settings.json`, eleven slash commands, an output style, a Haiku explorer subagent, and six stdlib-Python hooks under `.claude/hooks/`. Full list with evidence per row: [`docs/TECHNIQUES.md`](docs/TECHNIQUES.md).
+`setup.sh` writes 29 techniques across `CLAUDE.md`, `.claudeignore`, `.claude/settings.json`, twelve slash commands, an output style, a Haiku explorer subagent, and seven stdlib-Python hooks under `.claude/hooks/`. Full list with evidence per row: [`docs/TECHNIQUES.md`](docs/TECHNIQUES.md).
 
-The centerpiece is **`auto_context.py`** (UserPromptSubmit hook) plus **`build_repo_graph.py`** (install-time graph builder). All hooks fail-open — if they break, your session keeps going.
+The centerpiece is **`auto_context.py`** (UserPromptSubmit hook) plus **`build_repo_graph.py`** (install-time graph builder); **`savings_tracker.py`** (Stop hook) + `/savings` make the win visible. All hooks fail-open — if they break, your session keeps going.
 
 ## What it doesn't do
 

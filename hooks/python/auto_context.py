@@ -33,6 +33,7 @@ import math
 import os
 import re
 import sys
+import time
 
 # Small natural-language → code-term expansion. Kept deliberately small so
 # it can't hijack unrelated prompts; tuned from dogfood failures where the
@@ -567,7 +568,40 @@ def main():
     block = format_block(hits, graph)
     if block:
         sys.stdout.write(block + "\n")
+        _log_suggestion(cwd, event.get("session_id", ""), hits, prompt)
     return 0
+
+
+def _log_suggestion(cwd, session_id, hits, prompt):
+    """Append a suggestion record so savings_tracker (Stop hook) can later
+    credit context-os for files Claude actually opened. Data we control —
+    robust against transcript-format churn. Fail-open, never raises."""
+    if os.environ.get("CONTEXT_OS_SAVINGS") == "0":
+        return
+    try:
+        files = []
+        seen = set()
+        for c in hits:
+            f = c.get("file")
+            if f and f not in seen:
+                seen.add(f)
+                files.append(f)
+        if not files:
+            return
+        d = os.path.join(cwd, ".context-os", "savings")
+        os.makedirs(d, exist_ok=True)
+        rec = {
+            "ts": time.time(),
+            "session": (session_id or "")[:12],
+            "n": len(files),
+            "files": files,
+            "prompt_chars": len(prompt),
+        }
+        with open(os.path.join(d, "suggestions.jsonl"), "a",
+                  encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

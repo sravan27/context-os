@@ -85,6 +85,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 python/evals/runners/ranker_floor.py
 
+      - name: Savings receipts correctness gate
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 python/evals/runners/savings_test.py
+
       - name: Upload eval reports
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
