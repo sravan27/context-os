@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.9.3"
+VERSION="2.10.0"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -263,7 +263,7 @@ if [ "${1:-}" = "--status" ]; then
     check fail "statusLine" "not installed"
   fi
   if [ -f .claude/hooks/dedup_guard.py ] && [ -f .claude/hooks/loop_guard.py ] && [ -f .claude/hooks/file_size_guard.py ] && [ -f .claude/hooks/session_profile.py ] && [ -f .claude/hooks/auto_context.py ] && [ -f .claude/hooks/prewarm.py ]; then
-    check ok "python hooks" "7 installed (dedup, loop, size, profiler, autocontext, prewarm, savings)"
+    check ok "python hooks" "8 installed (dedup, loop, size, smartread, profiler, autocontext, prewarm, savings)"
   else
     check fail "python hooks" "not fully installed"
   fi
@@ -345,7 +345,7 @@ try:
 except: pass
 " 2>/dev/null && echo "  removed allowedTools from settings.json"
   fi
-  for cmd in compact context ship cheap find deps hot warm-clear relevant insights rebuild-graph savings; do
+  for cmd in compact context ship cheap find deps hot warm-clear relevant insights rebuild-graph savings outline; do
     [ -f ".claude/commands/${cmd}.md" ] && rm ".claude/commands/${cmd}.md" && echo "  removed /.claude/commands/${cmd}.md"
   done
   for agent in explorer; do
@@ -353,7 +353,7 @@ except: pass
   done
   [ -f .claude/output-styles/terse.md ] && rm .claude/output-styles/terse.md && echo "  removed /.claude/output-styles/terse.md"
   [ -f .claude/statusline.sh ] && rm .claude/statusline.sh && echo "  removed /.claude/statusline.sh"
-  for h in dedup_guard.py loop_guard.py file_size_guard.py session_profile.py auto_context.py prewarm.py savings_tracker.py; do
+  for h in dedup_guard.py loop_guard.py file_size_guard.py smart_read.py session_profile.py auto_context.py prewarm.py savings_tracker.py; do
     [ -f ".claude/hooks/$h" ] && rm ".claude/hooks/$h" && echo "  removed .claude/hooks/$h"
   done
   [ -d .context-os ] && rm -rf .context-os && echo "  removed .context-os/"
@@ -546,6 +546,10 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+# ---------------------------------------------------------------------------
+# Language patterns. Each matches top-level declarations on their own line.
+# Keep patterns conservative — false negatives > false positives.
+# ---------------------------------------------------------------------------
 LANG_PATTERNS = {
     "rust": {
         "exts": [".rs"],
@@ -583,6 +587,7 @@ LANG_PATTERNS = {
     },
     "go": {
         "exts": [".go"],
+        # match `func Name(` or `func (r *Recv) Name(` or `type Name`
         "symbol": re.compile(
             r"^func\s+(?:\([^)]*\)\s+)?([A-Z][\w]*)\s*\(|^type\s+([A-Z][\w]*)"
         ),
@@ -596,7 +601,13 @@ EXCLUDE_DIRS = {
     ".mypy_cache", ".ruff_cache", ".tox", "bower_components", "vendor",
     ".idea", ".vscode", ".context-os",
 }
+# Prefix-based excludes: dir name starts with any of these. Catches eval
+# fixtures, sibling mock repos, etc. without enumerating every variant.
+EXCLUDE_DIR_PREFIXES = (
+    "autocontext_fixture",   # our own eval fixtures — don't pollute graph
+)
 
+# Absolute cap per file to keep pathological files from stalling the walker
 MAX_LINES_SCAN = 20000
 
 
@@ -605,6 +616,7 @@ def walk_sources(root):
         dirnames[:] = [
             d for d in dirnames
             if d not in EXCLUDE_DIRS and not d.startswith(".")
+            and not any(d.startswith(p) for p in EXCLUDE_DIR_PREFIXES)
         ]
         for fn in filenames:
             if fn.startswith("."):
@@ -616,6 +628,15 @@ def walk_sources(root):
                     rel = os.path.relpath(path, root)
                     yield rel, lang, path, cfg
                     break
+
+
+def _clean_sig(line):
+    """Trim a declaration line into a compact signature for the outline."""
+    s = line.strip()
+    # drop trailing block-openers / terminators that add no signal
+    s = re.sub(r"\s*[{:]\s*$", "", s)
+    s = s.rstrip("\\").rstrip()
+    return s[:120]
 
 
 def extract(path, cfg):
@@ -631,10 +652,17 @@ def extract(path, cfg):
                 s = cfg["symbol"].search(line)
                 if s:
                     groups = [g for g in s.groups() if g]
+                    sig = _clean_sig(line)
                     if len(groups) >= 2:
-                        symbols.append({"name": groups[1], "kind": groups[0], "line": i})
+                        symbols.append(
+                            {"name": groups[1], "kind": groups[0],
+                             "line": i, "sig": sig}
+                        )
                     elif len(groups) == 1:
-                        symbols.append({"name": groups[0], "kind": "symbol", "line": i})
+                        symbols.append(
+                            {"name": groups[0], "kind": "symbol",
+                             "line": i, "sig": sig}
+                        )
                 im = cfg["import"].search(line)
                 if im:
                     modules = [g for g in im.groups() if g]
@@ -642,6 +670,15 @@ def extract(path, cfg):
                         imports.append(modules[0])
     except Exception:
         pass
+    # Approximate each symbol's end line as (next top-level symbol start − 1),
+    # last one runs to EOF. Good enough to slice a function/class out of a big
+    # file without reading the whole thing.
+    for idx, sym in enumerate(symbols):
+        if idx + 1 < len(symbols):
+            sym["end"] = max(sym["line"], symbols[idx + 1]["line"] - 1)
+        else:
+            sym["end"] = max(sym["line"], line_count)
+    # dedupe imports preserving order
     seen = set()
     unique_imports = []
     for m in imports:
@@ -654,8 +691,10 @@ def extract(path, cfg):
 def hot_files(root, max_items=20):
     try:
         out = subprocess.check_output(
-            ["git", "-C", root, "log", "--name-only", "--since=90.days",
-             "--pretty=format:", "-n", "500"],
+            [
+                "git", "-C", root, "log", "--name-only",
+                "--since=90.days", "--pretty=format:", "-n", "500",
+            ],
             stderr=subprocess.DEVNULL, text=True, timeout=15,
         )
     except Exception:
@@ -668,6 +707,11 @@ def hot_files(root, max_items=20):
         top = line.split("/", 1)[0]
         if top in EXCLUDE_DIRS:
             continue
+        # Also honor prefix excludes at any path depth (fixture dirs etc.).
+        if any(seg.startswith(p) for seg in line.split("/")
+               for p in EXCLUDE_DIR_PREFIXES):
+            continue
+        # skip obvious lockfiles and binaries
         base = os.path.basename(line).lower()
         if base in {"package-lock.json", "yarn.lock", "cargo.lock",
                    "poetry.lock", "pnpm-lock.yaml", "composer.lock"}:
@@ -677,21 +721,52 @@ def hot_files(root, max_items=20):
     return [{"path": p, "touches": c} for p, c in ranked]
 
 
+_PATH_TOK_RE_CAMEL = re.compile(r"[a-z]+|[0-9]+")
+_PATH_TOK_RE_SPLIT = re.compile(r"[_\-.]+")
+
+
+def _path_tokens(fpath):
+    """Tokens used by the hook's IDF weighting. Mirror of the hook's
+    `_file_path_tokens` — precomputing here avoids an O(N) scan on
+    every UserPromptSubmit. At 50k files this drops p99 by ~70%."""
+    toks = set()
+    low = fpath.lower()
+    for seg in re.split(r"[/\\]+", low):
+        base = os.path.splitext(seg)[0]
+        for part in _PATH_TOK_RE_SPLIT.split(base):
+            if len(part) >= 2:
+                toks.add(part)
+            for sub in _PATH_TOK_RE_CAMEL.findall(part):
+                if len(sub) >= 2:
+                    toks.add(sub)
+    return toks
+
+
 def build(root):
     files = {}
     symbol_index = {}
     imported_by = {}
+    path_df = {}   # token -> document frequency across file paths
+
     for rel, lang, path, cfg in walk_sources(root):
         symbols, imports, lines = extract(path, cfg)
-        files[rel] = {"lang": lang, "lines": lines, "symbols": symbols, "imports": imports}
+        files[rel] = {
+            "lang": lang,
+            "lines": lines,
+            "symbols": symbols,
+            "imports": imports,
+        }
         for sym in symbols:
             symbol_index.setdefault(sym["name"], []).append(
                 {"file": rel, "line": sym["line"], "kind": sym["kind"]}
             )
         for im in imports:
             imported_by.setdefault(im, []).append(rel)
+        for t in _path_tokens(rel):
+            path_df[t] = path_df.get(t, 0) + 1
+
     return {
-        "version": 1,
+        "version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "repo_root": os.path.abspath(root),
         "file_count": len(files),
@@ -700,6 +775,7 @@ def build(root):
         "files": files,
         "symbol_index": symbol_index,
         "imported_by": imported_by,
+        "path_df": path_df,
     }
 
 
@@ -733,6 +809,10 @@ def main():
         out_path = os.path.join(out_dir, "repo-graph.json")
         with open(out_path, "w") as f:
             json.dump(graph, f, separators=(",", ":"))
+        sys.stderr.write(
+            f"[context-os] repo-graph: {out_path} "
+            f"({graph['file_count']} files, {graph['symbol_count']} symbols)\n"
+        )
     except Exception as e:
         sys.stderr.write(f"[context-os] repo-graph write failed: {e}\n")
         return 0
@@ -1177,7 +1257,24 @@ or re-format. The shareable card alone is available with `--card-only`; raw
 numbers with `--json`.
 CMDEOF
 
-echo "  [$STEP/$TOTAL] installed 12 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights /rebuild-graph /savings)"
+cat > .claude/commands/outline.md << 'CMDEOF'
+---
+description: Show a file's structural map (symbols + line ranges) so you can read only the slice you need
+---
+
+Run, substituting the file the user named (or the one in context):
+
+```bash
+python3 .context-os/scripts/outline.py "<file>" --root "$(pwd)" 2>/dev/null \
+  || echo "No graph yet — run /rebuild-graph first."
+```
+
+Print the output verbatim. It lists every top-level symbol with its exact line
+range. Use it to `Read(file, offset=N, limit=M)` the precise block you need
+instead of loading the whole file into context.
+CMDEOF
+
+echo "  [$STEP/$TOTAL] installed 13 slash commands (/compact /context /ship /cheap /find /deps /hot /warm-clear /relevant /insights /rebuild-graph /savings /outline)"
 
 # ============================================================================
 # STEP 7: Haiku subagent — 15x cheaper than Opus for exploration
@@ -2658,6 +2755,28 @@ def analyze(episodes, sugg_items, sugg_union):
     }
 
 
+def read_slices(savings_dir, session_id):
+    """Sum tokens smart_read kept out of context this session (whole-file
+    reads it turned into outlines). Returns (saved, count)."""
+    f = savings_dir / "slices.jsonl"
+    if not f.exists():
+        return 0, 0
+    saved = n = 0
+    try:
+        for line in f.open("r", encoding="utf-8", errors="replace"):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if session_id and rec.get("session") != session_id[:12]:
+                continue
+            saved += rec.get("saved", 0) or 0
+            n += 1
+    except OSError:
+        pass
+    return saved, n
+
+
 def load_total(savings_dir):
     try:
         return json.loads((savings_dir / "total.json").read_text())
@@ -2704,8 +2823,9 @@ def main():
 
     savings_dir = Path(cwd) / SAVINGS_DIR_NAME
     sugg_items, sugg_union, n_sugg = load_suggestions(savings_dir, session_id, cwd)
-    if n_sugg == 0:
-        return 0  # auto_context never fired this session
+    slice_saved, n_slices = read_slices(savings_dir, session_id)
+    if n_sugg == 0 and n_slices == 0:
+        return 0  # neither auto_context nor smart_read fired this session
 
     episodes, total_tokens, turns = parse_transcript(transcript)
     a = analyze(episodes, sugg_items, sugg_union)
@@ -2725,7 +2845,9 @@ def main():
         method = "estimate"
 
     n_hits = a["assisted_hits"]
-    tokens_saved = n_hits * per_hit
+    search_saved = n_hits * per_hit
+    # slice_saved / n_slices computed above (smart_read whole-file → outline).
+    tokens_saved = search_saved + slice_saved
 
     today = time.strftime("%Y-%m-%d")
     prev = load_total(savings_dir)
@@ -2744,6 +2866,8 @@ def main():
         "exploration_tokens": a["exploration_tokens"],
         "avg_search_cost": round(a["avg_search_cost"]),
         "per_hit": per_hit, "method": method,
+        "slices": n_slices, "slice_saved": slice_saved,
+        "search_saved": search_saved,
         "turns": turns, "session_tokens": total_tokens,
         "tokens_saved": tokens_saved,
     }
@@ -2763,6 +2887,7 @@ def main():
         "sessions": (prev.get("sessions", 0) or 0) + 1,
         "measured_sessions": (prev.get("measured_sessions", 0) or 0)
         + (1 if method == "measured" else 0),
+        "slices": (prev.get("slices", 0) or 0) + n_slices,
         "first_date": prev.get("first_date") or today,
         "last_date": today, "streak": streak,
         "milestone": crossed or prev.get("milestone", 0),
@@ -2773,19 +2898,27 @@ def main():
     except OSError:
         pass
 
-    if n_hits > 0:
+    if tokens_saved > 0:
         usd = new_total / 1_000_000 * 6.0
-        if method == "measured":
-            how = (f"a search cost ~{int(a['avg_search_cost']):,} tok here, "
-                   f"measured across {a['explored_episodes']} that still explored")
-        elif method == "estimate":
-            how = "conservative estimate (no search to measure this session)"
-        else:
-            how = "per CONTEXT_OS_SAVINGS_PER_HIT"
+        parts = []
+        if n_hits > 0:
+            if method == "measured":
+                how = (f"a search cost ~{int(a['avg_search_cost']):,} tok here, "
+                       f"measured")
+            elif method == "estimate":
+                how = "conservative estimate"
+            else:
+                how = "per CONTEXT_OS_SAVINGS_PER_HIT"
+            parts.append(
+                f"{n_hits} prompt{'s' if n_hits != 1 else ''} went straight to "
+                f"the right file ({how})")
+        if n_slices > 0:
+            parts.append(
+                f"{n_slices} big file{'s' if n_slices != 1 else ''} read as an "
+                f"outline, not whole ({slice_saved:,} tok kept out of context)")
         print(
-            f"[context-os] receipt: {n_hits} prompt"
-            f"{'s' if n_hits != 1 else ''} went straight to the right file "
-            f"→ ~{tokens_saved:,} tokens saved ({how}). "
+            f"[context-os] receipt: " + "; ".join(parts) +
+            f" → ~{tokens_saved:,} tokens saved. "
             f"All-time: {new_total:,} tok (~${usd:,.2f}) · {streak}-day streak. "
             f"/savings for the breakdown.",
             file=sys.stderr,
@@ -2806,6 +2939,230 @@ if __name__ == "__main__":
         sys.exit(0)
 CONTEXT_OS_SAVINGS_EOF
 chmod +x "$HOOK_DIR/savings_tracker.py"
+
+# --- smart_read.py (PreToolUse Read: whole-file → structural outline) ---
+cat > "$HOOK_DIR/smart_read.py" <<'CONTEXT_OS_SMARTREAD_EOF'
+#!/usr/bin/env python3
+"""
+smart_read.py — Context OS PreToolUse hook (Read). The structural-slicing layer.
+
+The compounding cost nobody attacks
+------------------------------------
+auto_context kills *first-turn* exploration. But the bigger, compounding cost
+in a long session is this: every file Claude reads enters the context window
+and is **re-sent on every subsequent turn** until compaction. Read an 800-line
+file at turn 3 and you pay ~6.5k tokens for it again, and again, for the next
+40 turns — even though Claude needed one 40-line function.
+
+`file_size_guard` blocks oversized whole-file reads but only says "use
+offset/limit" — leaving Claude to Grep or guess, which costs *more*. This hook
+closes that gap: it intercepts a whole-file Read and hands back the file's
+**outline** — every symbol with its exact line range, rendered straight from
+the repo graph with zero file content — so Claude re-reads only the slice it
+needs. The 800 lines never enter context.
+
+Mechanism (proven): PreToolUse exit 2 + stderr → Claude sees the outline and
+retries with `offset`/`limit` (which this hook never intercepts). Each file is
+offered an outline at most once per session, so there is no loop and no nag.
+
+Logs each interception to `.context-os/savings/slices.jsonl`; the Stop-time
+Receipts hook credits the whole-file tokens kept out of context (a floor —
+the avoided per-turn re-sends dwarf it).
+
+Disable: CONTEXT_OS_SMART_READ=0. Threshold: CONTEXT_OS_SMART_READ_MIN (lines,
+default 400). Fail-open on every error.
+"""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+STATE_DIR = Path.home() / ".context-os" / "state"
+CHARS_PER_TOKEN = 4
+MAX_OUTLINE_ROWS = 80
+
+
+def _load_graph(cwd):
+    p = os.path.join(cwd, ".context-os", "repo-graph.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _rel(path, cwd):
+    try:
+        return os.path.relpath(path, cwd)
+    except Exception:
+        return path
+
+
+def _count_lines(path, cap):
+    n = 0
+    try:
+        with open(path, "rb") as f:
+            for n, _ in enumerate(f, 1):
+                if n >= cap:
+                    break
+    except Exception:
+        return 0
+    return n
+
+
+def _file_entry(graph, rel, path):
+    files = (graph or {}).get("files") or {}
+    if rel in files:
+        return files[rel]
+    # tolerate path/sep differences: match by suffix
+    norm = rel.replace(os.sep, "/")
+    for k, v in files.items():
+        if k.replace(os.sep, "/").endswith("/" + norm) or \
+                norm.endswith("/" + k.replace(os.sep, "/")):
+            return v
+    base = os.path.basename(rel)
+    cand = [v for k, v in files.items() if os.path.basename(k) == base]
+    return cand[0] if len(cand) == 1 else None
+
+
+def _render_outline(rel, entry, total_lines):
+    syms = entry.get("symbols") or []
+    rows = []
+    for s in syms:
+        line = s.get("line", 1)
+        end = s.get("end", line)
+        sig = s.get("sig") or f"{s.get('kind','')} {s.get('name','')}".strip()
+        span = f"L{line}-{end}"
+        rows.append((line, end, f"  {span:<12} {sig}"))
+    if not rows:
+        return None, 0
+    shown = rows[:MAX_OUTLINE_ROWS]
+    body = "\n".join(r[2] for r in shown)
+    more = len(rows) - len(shown)
+    # pick the largest symbol as the "for example" slice
+    biggest = max(rows, key=lambda r: r[1] - r[0])
+    ex_off, ex_end = biggest[0], biggest[1]
+    ex_lim = max(1, ex_end - ex_off + 1)
+    out = [
+        f"[context-os] `{rel}` is {total_lines} lines. Reading it whole loads "
+        f"it into context for every turn that follows. Its structure ({len(rows)} "
+        f"symbols) — read the slice you need:",
+        "",
+        body,
+    ]
+    if more > 0:
+        out.append(f"  … +{more} more symbols")
+    out += [
+        "",
+        f"e.g. Read(\"{rel}\", offset={ex_off}, limit={ex_lim}) for the block at "
+        f"L{ex_off}. Sliced reads are never intercepted. Need the whole file? "
+        f"Re-Read it (won't be intercepted again this session) or set "
+        f"CONTEXT_OS_SMART_READ=0.",
+    ]
+    return "\n".join(out), len(rows)
+
+
+def _already_offered(session, rel):
+    """Offer a given file's outline at most once per session (no loop/nag)."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        f = STATE_DIR / f"smartread-{(session or 'default')[:24]}.json"
+        try:
+            seen = set(json.loads(f.read_text()))
+        except (OSError, json.JSONDecodeError):
+            seen = set()
+        if rel in seen:
+            return True
+        seen.add(rel)
+        f.write_text(json.dumps(sorted(seen)))
+        return False
+    except Exception:
+        return False
+
+
+def _log_slice(cwd, session, rel, full_lines, full_tokens, outline_tokens):
+    try:
+        d = os.path.join(cwd, ".context-os", "savings")
+        os.makedirs(d, exist_ok=True)
+        rec = {"ts": time.time(), "session": (session or "")[:12], "file": rel,
+               "full_lines": full_lines, "full_tokens": full_tokens,
+               "outline_tokens": outline_tokens,
+               "saved": max(0, full_tokens - outline_tokens)}
+        with open(os.path.join(d, "slices.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
+def main():
+    if os.environ.get("CONTEXT_OS_SMART_READ") == "0":
+        return 0
+    try:
+        event = json.load(sys.stdin)
+    except Exception:
+        return 0
+    if event.get("tool_name") != "Read":
+        return 0
+    inp = event.get("tool_input") or {}
+    path = inp.get("file_path")
+    if not path:
+        return 0
+    # Only intercept whole-file reads — slices are exactly what we want.
+    if inp.get("offset") is not None or inp.get("limit") is not None:
+        return 0
+    try:
+        threshold = int(os.environ.get("CONTEXT_OS_SMART_READ_MIN", "400"))
+    except ValueError:
+        threshold = 400
+    cwd = event.get("cwd") or os.getcwd()
+    try:
+        if not os.path.isfile(path):
+            return 0
+    except Exception:
+        return 0
+
+    graph = _load_graph(cwd)
+    if not graph:
+        return 0  # no map → let file_size_guard handle pure size
+    rel = _rel(path, cwd)
+    entry = _file_entry(graph, rel, path)
+    if not entry:
+        return 0
+    syms = entry.get("symbols") or []
+    if len(syms) < 2:
+        return 0  # too little structure to slice usefully
+
+    capped = _count_lines(path, threshold + 1)
+    if capped <= threshold:
+        return 0
+    # Real line count for display/logging (the threshold scan is capped).
+    real_lines = max(entry.get("lines") or 0, capped)
+
+    session = event.get("session_id", "") or ""
+    if _already_offered(session, rel):
+        return 0  # offered once already — let Claude read it whole now
+
+    outline, n = _render_outline(rel, entry, real_lines)
+    if not outline:
+        return 0
+    try:
+        full_tokens = max(1, os.path.getsize(path) // CHARS_PER_TOKEN)
+    except Exception:
+        full_tokens = real_lines * 8
+    outline_tokens = max(1, len(outline) // CHARS_PER_TOKEN)
+    _log_slice(cwd, session, rel, real_lines, full_tokens, outline_tokens)
+    sys.stderr.write(outline + "\n")
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_SMARTREAD_EOF
+chmod +x "$HOOK_DIR/smart_read.py"
 
 # --- savings_report.py (/savings backend) → .context-os/scripts/ ------------
 mkdir -p .context-os/scripts
@@ -2866,6 +3223,10 @@ def aggregate(rows):
     tot_sugg_files = sum(r.get("suggested_files", 0) or 0 for r in rows)
     tot_explored = sum(r.get("explored_episodes", 0) or 0 for r in rows)
     tot_expl_tok = sum(r.get("exploration_tokens", 0) or 0 for r in rows)
+    tot_slices = sum(r.get("slices", 0) or 0 for r in rows)
+    tot_slice_saved = sum(r.get("slice_saved", 0) or 0 for r in rows)
+    tot_search_saved = sum(r.get("search_saved",
+                                 r.get("tokens_saved", 0)) or 0 for r in rows)
     measured_rows = sum(1 for r in rows if r.get("method") == "measured")
     measured_saved = sum(r.get("tokens_saved", 0) or 0
                          for r in rows if r.get("method") == "measured")
@@ -2919,6 +3280,9 @@ def aggregate(rows):
         "measured_rows": measured_rows,
         "measured_saved": measured_saved,
         "measured_share": (measured_saved / tot_saved) if tot_saved else 0.0,
+        "slices": tot_slices,
+        "slice_saved": tot_slice_saved,
+        "search_saved": tot_search_saved,
     }
 
 
@@ -2972,6 +3336,9 @@ def make_report(a):
     out.append("")
     out.append(f"  Searches avoided {a['hits']:>13,}  "
                f"(prompts that opened the right file with no Glob/Grep)")
+    if a.get("slices", 0):
+        out.append(f"  Big reads sliced {a['slices']:>13,}  "
+                   f"(whole-file reads turned into a structural outline)")
     out.append(f"  Sessions         {a['sessions']:>13,}  "
                f"over {a['days_active']} active days")
     out.append(f"  Streak           {a['streak']:>13}  "
@@ -2979,6 +3346,16 @@ def make_report(a):
     if a["first_day"]:
         out.append(f"  Since            {a['first_day']:>13}")
     out.append("")
+
+    # Two measured sources, broken out.
+    if a.get("slice_saved", 0) and a.get("search_saved", 0):
+        out.append("  Where it came from")
+        out.append("  " + "─" * 44)
+        out.append(f"  Avoided searches  {a['search_saved']:>13,} tok  "
+                   f"(auto_context → straight to file)")
+        out.append(f"  Sliced big reads  {a['slice_saved']:>13,} tok  "
+                   f"(smart_read → outline, not whole file)")
+        out.append("")
 
     # The Boris line: measured, not estimated.
     if a["avg_search_cost"] > 0:
@@ -3068,6 +3445,111 @@ if __name__ == "__main__":
 CONTEXT_OS_SAVINGS_REPORT_EOF
 chmod +x .context-os/scripts/savings_report.py
 
+# --- outline.py (/outline backend) → .context-os/scripts/ -----------------
+cat > .context-os/scripts/outline.py <<'CONTEXT_OS_OUTLINE_EOF'
+#!/usr/bin/env python3
+"""
+outline.py — backend for the `/outline <file>` slash command.
+
+Prints a file's structural map — every top-level symbol with its exact line
+range and signature — straight from `.context-os/repo-graph.json`, with zero
+file content loaded. Lets Claude (or you) see the shape of a big file and read
+only the slice that matters, instead of dumping the whole thing into context.
+
+Usage:
+    python3 outline.py <file> [--root DIR]
+"""
+import argparse
+import json
+import os
+import sys
+
+
+def load_graph(root):
+    p = os.path.join(root, ".context-os", "repo-graph.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def find_entry(graph, target, root):
+    files = (graph or {}).get("files") or {}
+    if not files:
+        return None, None
+    # normalize the requested path to repo-relative
+    t = target
+    if os.path.isabs(t):
+        try:
+            t = os.path.relpath(t, root)
+        except Exception:
+            pass
+    t = t.replace(os.sep, "/").lstrip("./")
+    if t in files:
+        return t, files[t]
+    for k, v in files.items():
+        kk = k.replace(os.sep, "/")
+        if kk.endswith("/" + t) or t.endswith("/" + kk):
+            return k, v
+    base = os.path.basename(t)
+    cand = [(k, v) for k, v in files.items() if os.path.basename(k) == base]
+    if len(cand) == 1:
+        return cand[0]
+    return None, None
+
+
+def render(rel, entry):
+    syms = entry.get("symbols") or []
+    lines = entry.get("lines", 0)
+    out = [f"\n  {rel}  ({lines} lines · {len(syms)} symbols)",
+           "  " + "─" * 56]
+    if not syms:
+        out.append("  (no top-level symbols indexed)")
+        return "\n".join(out) + "\n"
+    for s in syms:
+        ln, end = s.get("line", 1), s.get("end", s.get("line", 1))
+        sig = s.get("sig") or f"{s.get('kind','')} {s.get('name','')}".strip()
+        out.append(f"  L{ln:<5}-{end:<5} {sig}")
+    biggest = max(syms, key=lambda s: (s.get("end", s["line"]) - s["line"]))
+    off = biggest["line"]
+    lim = max(1, biggest.get("end", off) - off + 1)
+    out.append("")
+    out.append(f"  Read a slice, not the whole file — e.g. "
+               f"Read(\"{rel}\", offset={off}, limit={lim})")
+    return "\n".join(out) + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("file", nargs="?")
+    ap.add_argument("--root", default=os.getcwd())
+    args = ap.parse_args()
+    if not args.file:
+        print("usage: /outline <file>")
+        return 0
+    graph = load_graph(args.root)
+    if not graph:
+        print("No repo graph yet — run `python3 .context-os/build_repo_graph.py .` "
+              "(or /rebuild-graph) first.")
+        return 0
+    rel, entry = find_entry(graph, args.file, args.root)
+    if not entry:
+        print(f"`{args.file}` is not in the graph. Try /rebuild-graph, or "
+              f"Grep within it. (Non-code files aren't indexed.)")
+        return 0
+    print(render(rel, entry))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
+CONTEXT_OS_OUTLINE_EOF
+chmod +x .context-os/scripts/outline.py
+
 # Merge Python hooks into settings.local.json. Additive merge — preserves any
 # existing hooks (e.g. from the optional binary-based step below).
 PY_ABS="$(cd "$HOOK_DIR" && pwd)"
@@ -3079,6 +3561,7 @@ PYTHON_HOOKS=$(cat <<HOOKJSON
     "PreToolUse": [
       {"matcher": "Read|Glob|Grep", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/dedup_guard.py'", "timeout": 3}]},
       {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/loop_guard.py'", "timeout": 3}]},
+      {"matcher": "Read", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/smart_read.py'", "timeout": 3}]},
       {"matcher": "Read", "hooks": [{"type": "command", "command": "python3 '$PY_ABS/file_size_guard.py'", "timeout": 3}]}
     ],
     "UserPromptSubmit": [
@@ -3113,10 +3596,10 @@ for event, entries in new_hooks.items():
             existing['hooks'][event].append(entry)
             seen.add(sig)
 json.dump(existing, open('$SETTINGS_LOCAL', 'w'), indent=2)
-" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 7 Python hooks (dedup, loop, size, profiler, autocontext, prewarm, savings)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
+" 2>/dev/null && echo "  [$STEP/$TOTAL] installed 8 Python hooks (dedup, loop, size, smartread, profiler, autocontext, prewarm, savings)" || echo "  [$STEP/$TOTAL] Python hooks install failed"
 else
   printf '%s' "$PYTHON_HOOKS" | python3 -m json.tool > "$SETTINGS_LOCAL" 2>/dev/null || printf '%s' "$PYTHON_HOOKS" > "$SETTINGS_LOCAL"
-  echo "  [$STEP/$TOTAL] installed 7 Python hooks (dedup, loop, size, profiler, autocontext, prewarm, savings)"
+  echo "  [$STEP/$TOTAL] installed 8 Python hooks (dedup, loop, size, smartread, profiler, autocontext, prewarm, savings)"
 fi
 
 # ============================================================================

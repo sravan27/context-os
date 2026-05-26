@@ -82,6 +82,36 @@ crates/ignore/src/gitignore.rs:118 · matched (fn) · imports: …
 claude: Read crates/ignore/src/gitignore.rs → done
 ```
 
+## Read less — the compounding cost nobody attacks
+
+auto_context kills *first-turn* exploration. But the bigger, compounding cost is
+that **every file Claude reads is re-sent on every later turn until compaction.**
+Read an 800-line file at turn 3 and you pay for it again, and again, for 40 turns
+— when Claude needed one 40-line function.
+
+So when Claude goes to read a whole file, context-os intercepts it and hands back
+the file's **outline** — every symbol with its exact line range, rendered from the
+graph with *zero* file content — and Claude re-reads only the slice it needs:
+
+```
+user: (Claude is about to Read payment.py — 847 lines)
+context-os intercepts ↓
+  L12-45    class PaymentProcessor
+  L47-89      def charge(self, amount, method)
+  L91-120     def refund(self, txn_id)
+  L340-410  def validate_card(number, cvv)
+  … +28 symbols
+  e.g. Read("payment.py", offset=47, limit=43) for the block at L47.
+
+claude: Read payment.py offset=47 limit=43 → 43 lines, not 847.
+```
+
+The 800 lines never enter context — so they're never re-sent. One whole-file read
+turned into an outline can keep ~20k tokens out of context per file. It fires once
+per file per session (no nag), only on big files, and only when the graph has the
+structure to slice. `/outline <file>` does it on demand. Disable with
+`CONTEXT_OS_SMART_READ=0`.
+
 ## Your savings, measured — not estimated
 
 Saving 40% silently builds no habit. So context-os keeps a receipt — and it
@@ -100,11 +130,15 @@ $ /savings
   All-time saved      2,340,000 tokens  (~$14.04)
   Runway bought            ~47 prompts before the rate window
   Searches avoided            412  (opened the right file with no Glob/Grep)
+  Big reads sliced             96  (whole-file reads turned into an outline)
+
+  Where it came from
+  Avoided searches    1,402,000 tok  (auto_context → straight to file)
+  Sliced big reads      938,000 tok  (smart_read → outline, not whole file)
 
   How it's measured
   A search cost        14,200 tokens on average — measured
                        from 287 of your own prompts that still explored
-  100% of the savings above is measured this way.
   ╭─────────────────────────────────────────────╮
   │            context-os · receipts            │
   │  2,340,000 tokens saved   (~$14.04)         │
@@ -142,9 +176,9 @@ python3 python/evals/runners/multi_repo_eval.py  # cross-repo eval, ~2 min
 
 ## What it installs
 
-`setup.sh` writes 29 techniques across `CLAUDE.md`, `.claudeignore`, `.claude/settings.json`, twelve slash commands, an output style, a Haiku explorer subagent, and seven stdlib-Python hooks under `.claude/hooks/`. Full list with evidence per row: [`docs/TECHNIQUES.md`](docs/TECHNIQUES.md).
+`setup.sh` writes 30 techniques across `CLAUDE.md`, `.claudeignore`, `.claude/settings.json`, thirteen slash commands, an output style, a Haiku explorer subagent, and eight stdlib-Python hooks under `.claude/hooks/`. Full list with evidence per row: [`docs/TECHNIQUES.md`](docs/TECHNIQUES.md).
 
-The centerpiece is **`auto_context.py`** (UserPromptSubmit hook) plus **`build_repo_graph.py`** (install-time graph builder); **`savings_tracker.py`** (Stop hook) + `/savings` make the win visible. All hooks fail-open — if they break, your session keeps going.
+Three hooks are the heart of it, all backed by one graph: **`auto_context.py`** (UserPromptSubmit — retrieval, skip first-turn exploration), **`smart_read.py`** (PreToolUse — structural slicing, read the slice not the file), and **`savings_tracker.py`** (Stop — measure both, causally) surfaced via `/savings`. All hooks fail-open — if they break, your session keeps going.
 
 ## What it doesn't do
 

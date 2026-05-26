@@ -61,6 +61,14 @@ The one loss (psf/requests) is honest: prompts in that set use exact class names
 - **9 CI-enforced regression gates** (`ranker_floor.py`) — retrieval quality cannot silently regress
 - 8-signal leave-one-out ablation confirms no dead weight
 
+**Structural slicing — the compounding-cost play (v2.10):**
+
+auto_context attacks first-turn exploration. But the larger cost in a long session is structural: **every file Claude reads is re-sent on every subsequent turn until compaction.** An 800-line file read at turn 3 is paid for ~40 more times. Your own `file_size_guard`-style nudges ("use offset/limit") don't help because the model doesn't know *which* lines — so it Greps, which costs more.
+
+`smart_read.py` (PreToolUse on Read) closes that. The graph already has every symbol; I extended it to carry each symbol's **line range + signature**. When Claude issues a whole-file Read of a big indexed file, the hook returns the file's **outline** — `L47-89  def charge(self, amount, method)` … — rendered with *zero* file content, and Claude re-reads just `offset=47, limit=43`. The 800 lines never enter context, so they're never re-sent. Once per file per session, fail-open, env-disablable.
+
+This is the part I think is genuinely new: a repo graph used not just for *retrieval* but for *structural compression of reads*. One whole-file read collapsed to an outline keeps ~20k tokens out of context — and unlike the first-turn saving, this one compounds across every remaining turn.
+
 **Receipts — per-session causal measurement (v2.9):**
 
 The piece I'm most interested in your read on. A Stop hook (`savings_tracker.py`) reconstructs each prompt's first-turn behaviour from the transcript and classifies it:
@@ -73,10 +81,10 @@ I think this is what a *shipped* version of this looks like: not "trust our benc
 
 ### How it works (30-second version)
 
-1. `build_repo_graph.py` walks the source tree once (≤1s on 10k files), extracts symbols + imports + git-hot files via regex, writes `.context-os/repo-graph.json`.
-2. `auto_context.py` is a `UserPromptSubmit` hook: extracts identifier/path tokens from the prompt, scores candidates from the graph (IDF-weighted symbol + path matches, basename-in-prompt detection, multi-token coverage bonus, import traversal, hot-file boost, test/hub-file penalties), emits a ≤50-token block.
-3. Claude sees the block *before* its first turn. Instead of `Glob → Grep → Read → Read → Read`, it usually goes straight to `Read` on the right file.
-4. At session end, `savings_tracker.py` measures how often that happened and what the searches it replaced actually cost — a receipt, not a claim.
+1. `build_repo_graph.py` walks the source tree once (≤1s on 10k files), extracts symbols (with line ranges + signatures) + imports + git-hot files via regex, writes `.context-os/repo-graph.json`.
+2. `auto_context.py` (`UserPromptSubmit`) extracts identifier/path tokens, scores candidates from the graph (IDF-weighted symbol + path matches, basename detection, multi-token coverage, import traversal, hot-file boost, test/hub penalties), emits a ≤50-token block *before* turn 1. Instead of `Glob → Grep → Read → Read → Read`, Claude goes straight to `Read`.
+3. `smart_read.py` (`PreToolUse` on Read) intercepts whole-file reads of big indexed files and returns the outline (symbols + line ranges) so Claude reads only the slice — the file body never bloats context.
+4. At session end, `savings_tracker.py` measures, causally from the transcript, how many searches were avoided and how many whole-file reads were sliced — and what each actually cost. A receipt, not a claim. Surfaced via `/savings`.
 
 ### The ask
 

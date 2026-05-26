@@ -54,6 +54,10 @@ def aggregate(rows):
     tot_sugg_files = sum(r.get("suggested_files", 0) or 0 for r in rows)
     tot_explored = sum(r.get("explored_episodes", 0) or 0 for r in rows)
     tot_expl_tok = sum(r.get("exploration_tokens", 0) or 0 for r in rows)
+    tot_slices = sum(r.get("slices", 0) or 0 for r in rows)
+    tot_slice_saved = sum(r.get("slice_saved", 0) or 0 for r in rows)
+    tot_search_saved = sum(r.get("search_saved",
+                                 r.get("tokens_saved", 0)) or 0 for r in rows)
     measured_rows = sum(1 for r in rows if r.get("method") == "measured")
     measured_saved = sum(r.get("tokens_saved", 0) or 0
                          for r in rows if r.get("method") == "measured")
@@ -107,6 +111,9 @@ def aggregate(rows):
         "measured_rows": measured_rows,
         "measured_saved": measured_saved,
         "measured_share": (measured_saved / tot_saved) if tot_saved else 0.0,
+        "slices": tot_slices,
+        "slice_saved": tot_slice_saved,
+        "search_saved": tot_search_saved,
     }
 
 
@@ -160,6 +167,9 @@ def make_report(a):
     out.append("")
     out.append(f"  Searches avoided {a['hits']:>13,}  "
                f"(prompts that opened the right file with no Glob/Grep)")
+    if a.get("slices", 0):
+        out.append(f"  Big reads sliced {a['slices']:>13,}  "
+                   f"(whole-file reads turned into a structural outline)")
     out.append(f"  Sessions         {a['sessions']:>13,}  "
                f"over {a['days_active']} active days")
     out.append(f"  Streak           {a['streak']:>13}  "
@@ -167,6 +177,16 @@ def make_report(a):
     if a["first_day"]:
         out.append(f"  Since            {a['first_day']:>13}")
     out.append("")
+
+    # Two measured sources, broken out.
+    if a.get("slice_saved", 0) and a.get("search_saved", 0):
+        out.append("  Where it came from")
+        out.append("  " + "─" * 44)
+        out.append(f"  Avoided searches  {a['search_saved']:>13,} tok  "
+                   f"(auto_context → straight to file)")
+        out.append(f"  Sliced big reads  {a['slice_saved']:>13,} tok  "
+                   f"(smart_read → outline, not whole file)")
+        out.append("")
 
     # The Boris line: measured, not estimated.
     if a["avg_search_cost"] > 0:

@@ -256,6 +256,28 @@ def analyze(episodes, sugg_items, sugg_union):
     }
 
 
+def read_slices(savings_dir, session_id):
+    """Sum tokens smart_read kept out of context this session (whole-file
+    reads it turned into outlines). Returns (saved, count)."""
+    f = savings_dir / "slices.jsonl"
+    if not f.exists():
+        return 0, 0
+    saved = n = 0
+    try:
+        for line in f.open("r", encoding="utf-8", errors="replace"):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if session_id and rec.get("session") != session_id[:12]:
+                continue
+            saved += rec.get("saved", 0) or 0
+            n += 1
+    except OSError:
+        pass
+    return saved, n
+
+
 def load_total(savings_dir):
     try:
         return json.loads((savings_dir / "total.json").read_text())
@@ -302,8 +324,9 @@ def main():
 
     savings_dir = Path(cwd) / SAVINGS_DIR_NAME
     sugg_items, sugg_union, n_sugg = load_suggestions(savings_dir, session_id, cwd)
-    if n_sugg == 0:
-        return 0  # auto_context never fired this session
+    slice_saved, n_slices = read_slices(savings_dir, session_id)
+    if n_sugg == 0 and n_slices == 0:
+        return 0  # neither auto_context nor smart_read fired this session
 
     episodes, total_tokens, turns = parse_transcript(transcript)
     a = analyze(episodes, sugg_items, sugg_union)
@@ -323,7 +346,9 @@ def main():
         method = "estimate"
 
     n_hits = a["assisted_hits"]
-    tokens_saved = n_hits * per_hit
+    search_saved = n_hits * per_hit
+    # slice_saved / n_slices computed above (smart_read whole-file → outline).
+    tokens_saved = search_saved + slice_saved
 
     today = time.strftime("%Y-%m-%d")
     prev = load_total(savings_dir)
@@ -342,6 +367,8 @@ def main():
         "exploration_tokens": a["exploration_tokens"],
         "avg_search_cost": round(a["avg_search_cost"]),
         "per_hit": per_hit, "method": method,
+        "slices": n_slices, "slice_saved": slice_saved,
+        "search_saved": search_saved,
         "turns": turns, "session_tokens": total_tokens,
         "tokens_saved": tokens_saved,
     }
@@ -361,6 +388,7 @@ def main():
         "sessions": (prev.get("sessions", 0) or 0) + 1,
         "measured_sessions": (prev.get("measured_sessions", 0) or 0)
         + (1 if method == "measured" else 0),
+        "slices": (prev.get("slices", 0) or 0) + n_slices,
         "first_date": prev.get("first_date") or today,
         "last_date": today, "streak": streak,
         "milestone": crossed or prev.get("milestone", 0),
@@ -371,19 +399,27 @@ def main():
     except OSError:
         pass
 
-    if n_hits > 0:
+    if tokens_saved > 0:
         usd = new_total / 1_000_000 * 6.0
-        if method == "measured":
-            how = (f"a search cost ~{int(a['avg_search_cost']):,} tok here, "
-                   f"measured across {a['explored_episodes']} that still explored")
-        elif method == "estimate":
-            how = "conservative estimate (no search to measure this session)"
-        else:
-            how = "per CONTEXT_OS_SAVINGS_PER_HIT"
+        parts = []
+        if n_hits > 0:
+            if method == "measured":
+                how = (f"a search cost ~{int(a['avg_search_cost']):,} tok here, "
+                       f"measured")
+            elif method == "estimate":
+                how = "conservative estimate"
+            else:
+                how = "per CONTEXT_OS_SAVINGS_PER_HIT"
+            parts.append(
+                f"{n_hits} prompt{'s' if n_hits != 1 else ''} went straight to "
+                f"the right file ({how})")
+        if n_slices > 0:
+            parts.append(
+                f"{n_slices} big file{'s' if n_slices != 1 else ''} read as an "
+                f"outline, not whole ({slice_saved:,} tok kept out of context)")
         print(
-            f"[context-os] receipt: {n_hits} prompt"
-            f"{'s' if n_hits != 1 else ''} went straight to the right file "
-            f"→ ~{tokens_saved:,} tokens saved ({how}). "
+            f"[context-os] receipt: " + "; ".join(parts) +
+            f" → ~{tokens_saved:,} tokens saved. "
             f"All-time: {new_total:,} tok (~${usd:,.2f}) · {streak}-day streak. "
             f"/savings for the breakdown.",
             file=sys.stderr,

@@ -107,6 +107,15 @@ def walk_sources(root):
                     break
 
 
+def _clean_sig(line):
+    """Trim a declaration line into a compact signature for the outline."""
+    s = line.strip()
+    # drop trailing block-openers / terminators that add no signal
+    s = re.sub(r"\s*[{:]\s*$", "", s)
+    s = s.rstrip("\\").rstrip()
+    return s[:120]
+
+
 def extract(path, cfg):
     symbols = []
     imports = []
@@ -120,13 +129,16 @@ def extract(path, cfg):
                 s = cfg["symbol"].search(line)
                 if s:
                     groups = [g for g in s.groups() if g]
+                    sig = _clean_sig(line)
                     if len(groups) >= 2:
                         symbols.append(
-                            {"name": groups[1], "kind": groups[0], "line": i}
+                            {"name": groups[1], "kind": groups[0],
+                             "line": i, "sig": sig}
                         )
                     elif len(groups) == 1:
                         symbols.append(
-                            {"name": groups[0], "kind": "symbol", "line": i}
+                            {"name": groups[0], "kind": "symbol",
+                             "line": i, "sig": sig}
                         )
                 im = cfg["import"].search(line)
                 if im:
@@ -135,6 +147,14 @@ def extract(path, cfg):
                         imports.append(modules[0])
     except Exception:
         pass
+    # Approximate each symbol's end line as (next top-level symbol start − 1),
+    # last one runs to EOF. Good enough to slice a function/class out of a big
+    # file without reading the whole thing.
+    for idx, sym in enumerate(symbols):
+        if idx + 1 < len(symbols):
+            sym["end"] = max(sym["line"], symbols[idx + 1]["line"] - 1)
+        else:
+            sym["end"] = max(sym["line"], line_count)
     # dedupe imports preserving order
     seen = set()
     unique_imports = []

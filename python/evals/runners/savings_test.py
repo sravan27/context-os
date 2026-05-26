@@ -32,6 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 TRACKER = os.path.join(REPO, "hooks", "python", "savings_tracker.py")
 REPORT = os.path.join(REPO, "python", "scripts", "savings_report.py")
+SMART_READ = os.path.join(REPO, "hooks", "python", "smart_read.py")
 
 _fails = []
 _base = datetime(2026, 5, 26, 12, 0, 0)
@@ -253,6 +254,106 @@ def test_report_surfaces_measurement():
     check("report: card renders box", "context-os" in card.stdout and "receipts" in card.stdout)
 
 
+def _mk_graph(root, rel, n_lines, n_syms):
+    """Write a minimal repo-graph with one big file of n_syms top-level syms."""
+    cos = os.path.join(root, ".context-os")
+    os.makedirs(cos, exist_ok=True)
+    step = max(2, n_lines // max(1, n_syms))
+    syms = []
+    for i in range(n_syms):
+        start = 1 + i * step
+        syms.append({"name": f"fn_{i}", "kind": "fn", "line": start,
+                     "end": min(n_lines, start + step - 1),
+                     "sig": f"def fn_{i}(a, b)"})
+    graph = {"version": 2, "files": {rel: {"lang": "python", "lines": n_lines,
+             "symbols": syms, "imports": []}}, "symbol_index": {},
+             "imported_by": {}, "path_df": {}}
+    json.dump(graph, open(os.path.join(cos, "repo-graph.json"), "w"))
+
+
+def run_smart_read(payload, env=None):
+    e = dict(os.environ)
+    if env:
+        e.update(env)
+    return subprocess.run([sys.executable, SMART_READ],
+                          input=json.dumps(payload), capture_output=True,
+                          text=True, env=e)
+
+
+def test_smart_read_offers_outline():
+    root = tempfile.mkdtemp(prefix="cos-sr1-")
+    rel = "pkg/big.py"
+    fp = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(fp))
+    open(fp, "w").write("\n".join(f"line {i}" for i in range(900)))
+    _mk_graph(root, rel, 900, 12)
+    import shutil
+    state = os.path.expanduser("~/.context-os/state/smartread-srsess1.json")
+    if os.path.exists(state):
+        os.remove(state)
+    r = run_smart_read({"tool_name": "Read", "tool_input": {"file_path": fp},
+                        "cwd": root, "session_id": "srsess1"})
+    check("smart_read: blocks whole read of big file (exit 2)", r.returncode == 2)
+    check("smart_read: outline shows line ranges", "L1-" in r.stderr and "fn_0" in r.stderr)
+    check("smart_read: suggests a sliced Read", "offset=" in r.stderr)
+    # logged a slice event
+    sl = os.path.join(root, ".context-os", "savings", "slices.jsonl")
+    rows = [json.loads(l) for l in open(sl)] if os.path.exists(sl) else []
+    check("smart_read: logged a slice event", len(rows) == 1 and rows[0]["saved"] > 0)
+    # second read of same file is allowed (no loop/nag)
+    r2 = run_smart_read({"tool_name": "Read", "tool_input": {"file_path": fp},
+                         "cwd": root, "session_id": "srsess1"})
+    check("smart_read: same file allowed second time (exit 0)", r2.returncode == 0)
+    if os.path.exists(state):
+        os.remove(state)
+
+
+def test_smart_read_passthrough():
+    root = tempfile.mkdtemp(prefix="cos-sr2-")
+    rel = "pkg/big.py"
+    fp = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(fp))
+    open(fp, "w").write("\n".join(f"line {i}" for i in range(900)))
+    _mk_graph(root, rel, 900, 12)
+    # sliced read → never intercepted
+    r = run_smart_read({"tool_name": "Read",
+                        "tool_input": {"file_path": fp, "offset": 10, "limit": 20},
+                        "cwd": root, "session_id": "srsess2"})
+    check("smart_read: sliced read passes through (exit 0)", r.returncode == 0)
+    # small file → not intercepted
+    small = os.path.join(root, "small.py")
+    open(small, "w").write("\n".join(str(i) for i in range(50)))
+    _mk_graph(root, "small.py", 50, 5)
+    r2 = run_smart_read({"tool_name": "Read", "tool_input": {"file_path": small},
+                         "cwd": root, "session_id": "srsess3"})
+    check("smart_read: small file passes through (exit 0)", r2.returncode == 0)
+    # disabled
+    r3 = run_smart_read({"tool_name": "Read", "tool_input": {"file_path": fp},
+                         "cwd": root, "session_id": "srsess4"},
+                        env={"CONTEXT_OS_SMART_READ": "0"})
+    check("smart_read: CONTEXT_OS_SMART_READ=0 disables (exit 0)", r3.returncode == 0)
+
+
+def test_slices_feed_receipts():
+    root = tempfile.mkdtemp(prefix="cos-sr3-")
+    sav = os.path.join(root, ".context-os", "savings")
+    os.makedirs(sav)
+    # only slices this session, no auto_context suggestions
+    with open(os.path.join(sav, "slices.jsonl"), "w") as f:
+        f.write(json.dumps({"ts": 1, "session": "slsess", "file": "a.py",
+                            "full_tokens": 20000, "outline_tokens": 1000,
+                            "saved": 19000}) + "\n")
+    tp = os.path.join(root, "t.jsonl")
+    write_transcript(tp, [("read a", [("Read", os.path.join(root, "a.py"), 300)])])
+    r = run_tracker({"transcript_path": tp, "session_id": "slsess", "cwd": root})
+    rows = ledger_rows(root)
+    check("slices→receipts: ledger row written from slices alone", len(rows) == 1)
+    if rows:
+        check("slices→receipts: slice_saved credited", rows[0]["tokens_saved"] == 19000)
+        check("slices→receipts: slices counted", rows[0]["slices"] == 1)
+    check("slices→receipts: receipt mentions outline", "outline" in r.stderr)
+
+
 def main():
     print("[savings_test] context-os Receipts — causal/measured correctness\n")
     test_measured_assisted_vs_explored()
@@ -263,6 +364,9 @@ def main():
     test_milestone_and_streak()
     test_fail_open()
     test_report_surfaces_measurement()
+    test_smart_read_offers_outline()
+    test_smart_read_passthrough()
+    test_slices_feed_receipts()
     print()
     if _fails:
         print(f"[savings_test] {len(_fails)} FAILED: {', '.join(_fails)}")
