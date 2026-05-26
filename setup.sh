@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.9.2"
+VERSION="2.9.3"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -2401,10 +2401,34 @@ chmod +x "$HOOK_DIR/prewarm.py"
 # --- savings_tracker.py (Stop: turn invisible savings into a visible number) -
 cat > "$HOOK_DIR/savings_tracker.py" <<'CONTEXT_OS_SAVINGS_EOF'
 #!/usr/bin/env python3
-"""Stop hook: credits context-os for files Claude opened that it surfaced,
-estimates tokens saved, maintains a personal ledger + cached total, and
-prints a one-line receipt. Pairs with auto_context's suggestion log.
-Fail-open on every error. Disable with CONTEXT_OS_SAVINGS=0."""
+"""
+savings_tracker.py — Stop hook. Turns auto_context's invisible token savings
+into a visible, personal, accumulating number — measured causally from the
+session transcript, not estimated from a constant.
+
+Why causal measurement matters
+-------------------------------
+A reviewer's first objection to any "we saved you X tokens" claim is: "that's
+a made-up number." So we don't make one up. We read the transcript and
+classify every prompt's first-turn behaviour:
+
+  * ASSISTED — auto_context surfaced a file and Claude's FIRST tool action was
+    a Read of that file, with no Glob/Grep before it. Exploration replaced.
+  * EXPLORED — Claude ran Glob/Grep (and read wrong files) before finding the
+    target. We MEASURE the token cost of that exploration from the actual
+    tool_result sizes in the transcript.
+
+The realized saving per assisted prompt is the *measured* average cost of an
+exploration in THAT SAME SESSION — "a search cost you ~14,200 tokens here, and
+context-os turned 8 searches into direct opens." When a session has no
+exploration to calibrate against, we fall back to a conservative constant
+(8k, ~⅖ of the 21k aggregate delta measured in the live A/B) and label the
+number an estimate, never passing it off as measured.
+
+Everything is local JSONL + one cached JSON. Fail-open on every error.
+Disable with CONTEXT_OS_SAVINGS=0. Override per-hit credit with
+CONTEXT_OS_SAVINGS_PER_HIT.
+"""
 import json
 import os
 import sys
@@ -2412,10 +2436,32 @@ import time
 from pathlib import Path
 
 SAVINGS_DIR_NAME = ".context-os/savings"
-DEFAULT_TOKENS_PER_HIT = 8000
+DEFAULT_TOKENS_PER_HIT = 8000          # conservative fallback (no baseline)
+MEASURED_MIN, MEASURED_MAX = 1500, 15000  # clamp measured per-hit to credible band
 MILESTONES = [100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000,
               10_000_000, 25_000_000, 50_000_000, 100_000_000]
-TOKENS_PER_PROMPT = 50_000
+TOKENS_PER_PROMPT = 50_000             # control-arm avg from the live A/B
+CHARS_PER_TOKEN = 4
+SEARCH_TOOLS = {"Glob", "Grep"}
+
+
+def approx_tokens(s):
+    return max(1, len(s) // CHARS_PER_TOKEN)
+
+
+def parse_iso(ts):
+    if not ts or not isinstance(ts, str):
+        return None
+    try:
+        return _dt_from_iso(ts)
+    except Exception:
+        return None
+
+
+def _dt_from_iso(ts):
+    from datetime import datetime
+    t = ts.replace("Z", "+00:00")
+    return datetime.fromisoformat(t).timestamp()
 
 
 def _abspath(p, cwd):
@@ -2427,51 +2473,108 @@ def _abspath(p, cwd):
         return p
 
 
-def _matches(s, reads, read_suffixes):
-    if s in reads:
+def _file_match(target_abs, candidate_set, candidate_suffixes):
+    """target opened by Claude; candidate_set = suggested files (abspaths)."""
+    if target_abs in candidate_set:
         return True
-    tail = s.lstrip("/")
-    for r in reads:
-        if r.endswith("/" + tail) or tail.endswith("/" + r.lstrip("/")):
+    tail = target_abs.lstrip("/")
+    for c in candidate_set:
+        if c.endswith("/" + tail) or tail.endswith("/" + c.lstrip("/")):
             return True
-    base = os.path.basename(s)
-    return bool(base and "/" in s and base in read_suffixes)
+    base = os.path.basename(target_abs)
+    return bool(base and "/" in target_abs and base in candidate_suffixes)
 
 
-def parse_transcript_reads(path):
-    reads, turns, total = set(), 0, 0
+def parse_transcript(path):
+    """Return ordered episodes + totals.
+
+    episode = {
+        "prompt_ts": float|None,
+        "actions": [ {"name","file","cost"} ],   # in call order
+        "has_search": bool,
+    }
+    Also returns (total_tokens, turns).
+    """
     try:
         lines = Path(path).open("r", encoding="utf-8", errors="replace").readlines()
     except OSError:
-        return reads, turns, total
+        return [], 0, 0
+
+    raw = []
+    result_tokens = {}   # tool_use_id -> approx tokens of its result
+    total_tokens = turns = 0
+
     for line in lines:
         try:
             evt = json.loads(line)
         except json.JSONDecodeError:
             continue
         msg = evt.get("message") or {}
+        role = msg.get("role") or evt.get("type")
+        ts = parse_iso(evt.get("timestamp"))
         usage = msg.get("usage") or evt.get("usage") or {}
         if usage:
             turns += 1
-            total += (usage.get("input_tokens", 0) or 0)
-            total += (usage.get("output_tokens", 0) or 0)
-            total += (usage.get("cache_creation_input_tokens", 0) or 0)
-        content = msg.get("content") or []
-        if isinstance(content, list):
+            total_tokens += (usage.get("input_tokens", 0) or 0)
+            total_tokens += (usage.get("output_tokens", 0) or 0)
+            total_tokens += (usage.get("cache_creation_input_tokens", 0) or 0)
+
+        text_parts, tools, has_result, has_text = [], [], False, False
+        content = msg.get("content")
+        if isinstance(content, str):
+            text_parts.append(content)
+            has_text = bool(content.strip())
+        elif isinstance(content, list):
             for b in content:
-                if isinstance(b, dict) and b.get("type") == "tool_use" \
-                        and b.get("name") == "Read":
-                    fp = (b.get("input") or {}).get("file_path", "")
-                    if fp:
-                        reads.add(os.path.normpath(fp))
-    return reads, turns, total
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get("type")
+                if bt == "text":
+                    txt = b.get("text") or ""
+                    if txt.strip():
+                        has_text = True
+                        text_parts.append(txt)
+                elif bt == "tool_use":
+                    tools.append((b.get("id"), b.get("name", "?"),
+                                  b.get("input") or {}))
+                elif bt == "tool_result":
+                    has_result = True
+                    rid = b.get("tool_use_id")
+                    rc = b.get("content")
+                    txt = rc if isinstance(rc, str) else json.dumps(rc)[:40000]
+                    if rid:
+                        result_tokens[rid] = approx_tokens(txt or "")
+        raw.append({"role": role, "ts": ts, "tools": tools,
+                    "is_prompt": role == "user" and has_text and not has_result})
+
+    # Attribute result tokens to tool calls; build episodes.
+    episodes = []
+    cur = None
+    for entry in raw:
+        if entry["is_prompt"]:
+            cur = {"prompt_ts": entry["ts"], "actions": [], "has_search": False}
+            episodes.append(cur)
+            continue
+        if cur is None:
+            cur = {"prompt_ts": None, "actions": [], "has_search": False}
+            episodes.append(cur)
+        for (tid, name, inp) in entry["tools"]:
+            cost = result_tokens.get(tid, 0)
+            f = ""
+            if name == "Read":
+                f = inp.get("file_path", "") or ""
+            cur["actions"].append({"name": name, "file": f, "cost": cost})
+            if name in SEARCH_TOOLS:
+                cur["has_search"] = True
+    return episodes, total_tokens, turns
 
 
-def read_suggestions(savings_dir, session_id, cwd):
-    suggested, n = set(), 0
+def load_suggestions(savings_dir, session_id, cwd):
+    """Return (sorted [(ts, abspath)], union_set, n_records)."""
+    items, union, n = [], set(), 0
     f = savings_dir / "suggestions.jsonl"
     if not f.exists():
-        return suggested, n
+        return items, union, n
     try:
         for line in f.open("r", encoding="utf-8", errors="replace"):
             try:
@@ -2481,13 +2584,78 @@ def read_suggestions(savings_dir, session_id, cwd):
             if session_id and rec.get("session") != session_id:
                 continue
             n += 1
+            ts = rec.get("ts")
             for p in rec.get("files", []):
                 ap = _abspath(p, cwd)
                 if ap:
-                    suggested.add(ap)
+                    items.append((ts if isinstance(ts, (int, float)) else None, ap))
+                    union.add(ap)
     except OSError:
         pass
-    return suggested, n
+    items.sort(key=lambda x: (x[0] is None, x[0] or 0))
+    return items, union, n
+
+
+def analyze(episodes, sugg_items, sugg_union):
+    """Causal classification + measured exploration cost.
+
+    Returns dict with assisted_hits, explored_episodes, exploration_tokens,
+    avg_search_cost, soft_hits.
+    """
+    have_ts = any(s[0] is not None for s in sugg_items) and \
+        any(e["prompt_ts"] is not None for e in episodes)
+    sugg_suffixes = {os.path.basename(a) for (_, a) in sugg_items}
+
+    # episode end bounds (next prompt ts) for cumulative suggestion windows
+    prompt_idx = [i for i, e in enumerate(episodes) if e["prompt_ts"] is not None]
+    next_ts = {}
+    for k, i in enumerate(prompt_idx):
+        nxt = episodes[prompt_idx[k + 1]]["prompt_ts"] if k + 1 < len(prompt_idx) else float("inf")
+        next_ts[i] = nxt
+
+    assisted = explored = exploration_tokens = 0
+    all_read_files = set()
+
+    for i, ep in enumerate(episodes):
+        actions = ep["actions"]
+        for a in actions:
+            if a["name"] == "Read" and a["file"]:
+                all_read_files.add(os.path.normpath(a["file"]))
+        if ep["has_search"]:
+            explored += 1
+            # exploration tokens: all Glob/Grep results + Reads that follow a
+            # search within this episode (the "found it" reads after a hunt).
+            seen_search = False
+            for a in actions:
+                if a["name"] in SEARCH_TOOLS:
+                    seen_search = True
+                    exploration_tokens += a["cost"]
+                elif a["name"] == "Read" and seen_search:
+                    exploration_tokens += a["cost"]
+
+        # ASSISTED: first action is a Read of a suggested file, no search first.
+        if not actions or actions[0]["name"] != "Read" or not actions[0]["file"]:
+            continue
+        first_file = os.path.normpath(actions[0]["file"])
+        # build the suggestion set visible to this episode
+        if have_ts and ep["prompt_ts"] is not None:
+            bound = next_ts.get(i, float("inf"))
+            cand = {a for (ts, a) in sugg_items
+                    if ts is None or ts < bound}
+        else:
+            cand = set(sugg_union)
+        if _file_match(first_file, cand, sugg_suffixes):
+            assisted += 1
+
+    soft_hits = len(sugg_union & all_read_files) if sugg_union else 0
+    avg_search_cost = (exploration_tokens / explored) if explored else 0
+    return {
+        "assisted_hits": assisted,
+        "explored_episodes": explored,
+        "exploration_tokens": exploration_tokens,
+        "avg_search_cost": avg_search_cost,
+        "soft_hits": soft_hits,
+    }
 
 
 def load_total(savings_dir):
@@ -2496,7 +2664,7 @@ def load_total(savings_dir):
     except (OSError, json.JSONDecodeError):
         return {"tokens_saved": 0, "hits": 0, "sessions": 0,
                 "first_date": None, "last_date": None, "streak": 0,
-                "milestone": 0}
+                "milestone": 0, "measured_sessions": 0}
 
 
 def compute_streak(prev, today):
@@ -2523,11 +2691,7 @@ def compute_streak(prev, today):
 def main():
     if os.environ.get("CONTEXT_OS_SAVINGS") == "0":
         return 0
-    try:
-        per_hit = int(os.environ.get("CONTEXT_OS_SAVINGS_PER_HIT",
-                                     str(DEFAULT_TOKENS_PER_HIT)))
-    except ValueError:
-        per_hit = DEFAULT_TOKENS_PER_HIT
+    env_per_hit = os.environ.get("CONTEXT_OS_SAVINGS_PER_HIT")
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
@@ -2537,57 +2701,101 @@ def main():
     cwd = payload.get("cwd") or os.getcwd()
     if not transcript or not os.path.exists(transcript):
         return 0
+
     savings_dir = Path(cwd) / SAVINGS_DIR_NAME
-    suggested, n_sugg = read_suggestions(savings_dir, session_id, cwd)
+    sugg_items, sugg_union, n_sugg = load_suggestions(savings_dir, session_id, cwd)
     if n_sugg == 0:
-        return 0
-    reads, turns, total_tokens = parse_transcript_reads(transcript)
-    read_suffixes = {os.path.basename(r) for r in reads}
-    hits = [s for s in suggested if _matches(s, reads, read_suffixes)]
-    n_hits = len(hits)
+        return 0  # auto_context never fired this session
+
+    episodes, total_tokens, turns = parse_transcript(transcript)
+    a = analyze(episodes, sugg_items, sugg_union)
+
+    # Per-hit credit: measured if we have an exploration baseline, else estimate.
+    if env_per_hit:
+        try:
+            per_hit = max(0, int(env_per_hit))
+        except ValueError:
+            per_hit = DEFAULT_TOKENS_PER_HIT
+        method = "override"
+    elif a["explored_episodes"] > 0 and a["avg_search_cost"] > 0:
+        per_hit = int(max(MEASURED_MIN, min(a["avg_search_cost"], MEASURED_MAX)))
+        method = "measured"
+    else:
+        per_hit = DEFAULT_TOKENS_PER_HIT
+        method = "estimate"
+
+    n_hits = a["assisted_hits"]
     tokens_saved = n_hits * per_hit
+
     today = time.strftime("%Y-%m-%d")
     prev = load_total(savings_dir)
     prev_saved = prev.get("tokens_saved", 0) or 0
     new_total = prev_saved + tokens_saved
     streak = compute_streak(prev, today)
+
     savings_dir.mkdir(parents=True, exist_ok=True)
-    record = {"ts": time.time(), "date": today, "session": session_id[:12],
-              "suggestions": n_sugg, "suggested_files": len(suggested),
-              "hits": n_hits, "reads": len(reads), "turns": turns,
-              "session_tokens": total_tokens, "tokens_saved": tokens_saved,
-              "per_hit": per_hit}
+    record = {
+        "ts": time.time(), "date": today, "session": session_id[:12],
+        "suggestions": n_sugg, "suggested_files": len(sugg_union),
+        "hits": n_hits,                       # causal assisted hits (headline)
+        "assisted_hits": n_hits,
+        "soft_hits": a["soft_hits"],          # broad suggested∩read (context)
+        "explored_episodes": a["explored_episodes"],
+        "exploration_tokens": a["exploration_tokens"],
+        "avg_search_cost": round(a["avg_search_cost"]),
+        "per_hit": per_hit, "method": method,
+        "turns": turns, "session_tokens": total_tokens,
+        "tokens_saved": tokens_saved,
+    }
     try:
         with (savings_dir / "ledger.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
     except OSError:
         return 0
+
     crossed = None
     for m in MILESTONES:
         if prev_saved < m <= new_total:
             crossed = m
-    total = {"tokens_saved": new_total,
-             "hits": (prev.get("hits", 0) or 0) + n_hits,
-             "sessions": (prev.get("sessions", 0) or 0) + 1,
-             "first_date": prev.get("first_date") or today,
-             "last_date": today, "streak": streak,
-             "milestone": crossed or prev.get("milestone", 0),
-             "usd_per_mtok": 6.0}
+    total = {
+        "tokens_saved": new_total,
+        "hits": (prev.get("hits", 0) or 0) + n_hits,
+        "sessions": (prev.get("sessions", 0) or 0) + 1,
+        "measured_sessions": (prev.get("measured_sessions", 0) or 0)
+        + (1 if method == "measured" else 0),
+        "first_date": prev.get("first_date") or today,
+        "last_date": today, "streak": streak,
+        "milestone": crossed or prev.get("milestone", 0),
+        "usd_per_mtok": 6.0,
+    }
     try:
         (savings_dir / "total.json").write_text(json.dumps(total))
     except OSError:
         pass
+
     if n_hits > 0:
-        runway = tokens_saved / TOKENS_PER_PROMPT
         usd = new_total / 1_000_000 * 6.0
-        print(f"[context-os] receipt: {n_hits} hit"
-              f"{'s' if n_hits != 1 else ''} -> ~{tokens_saved:,} tokens saved "
-              f"(~{runway:.1f} prompts of runway). All-time: {new_total:,} tok "
-              f"(~${usd:,.2f}) - {streak}-day streak. /savings for details.",
-              file=sys.stderr)
+        if method == "measured":
+            how = (f"a search cost ~{int(a['avg_search_cost']):,} tok here, "
+                   f"measured across {a['explored_episodes']} that still explored")
+        elif method == "estimate":
+            how = "conservative estimate (no search to measure this session)"
+        else:
+            how = "per CONTEXT_OS_SAVINGS_PER_HIT"
+        print(
+            f"[context-os] receipt: {n_hits} prompt"
+            f"{'s' if n_hits != 1 else ''} went straight to the right file "
+            f"→ ~{tokens_saved:,} tokens saved ({how}). "
+            f"All-time: {new_total:,} tok (~${usd:,.2f}) · {streak}-day streak. "
+            f"/savings for the breakdown.",
+            file=sys.stderr,
+        )
     if crossed:
-        print(f"[context-os] *** MILESTONE: {crossed:,} tokens saved with "
-              f"context-os. Share your card: /savings ***", file=sys.stderr)
+        print(
+            f"[context-os] *** MILESTONE: {crossed:,} tokens saved with "
+            f"context-os. Share your card: /savings ***",
+            file=sys.stderr,
+        )
     return 0
 
 
@@ -2603,17 +2811,31 @@ chmod +x "$HOOK_DIR/savings_tracker.py"
 mkdir -p .context-os/scripts
 cat > .context-os/scripts/savings_report.py <<'CONTEXT_OS_SAVINGS_REPORT_EOF'
 #!/usr/bin/env python3
-"""Backend for /savings. Reads the ledger savings_tracker.py writes and prints
-a dashboard + shareable card. Fail-open. See hooks/savings_tracker.py."""
+"""
+savings_report.py — backend for the `/savings` slash command.
+
+Reads the savings ledger written by savings_tracker.py (Stop hook) and prints
+a terminal dashboard plus a copy-paste shareable card. This is the surface
+that makes context-os's value felt: a personal, accumulating number with a
+day-streak, a dollar figure, and rate-limit runway framing.
+
+Usage:
+    python3 savings_report.py [--root DIR] [--json] [--card-only]
+
+Honesty: every number is derived from the local ledger. tokens-saved is the
+conservative per-hit estimate recorded at session time (see savings_tracker.py
+docstring). Nothing phones home.
+"""
 import argparse
 import json
 import os
 import sys
+import time
 from collections import defaultdict
 
 SAVINGS_DIR_NAME = ".context-os/savings"
-TOKENS_PER_PROMPT = 50_000
-USD_PER_MTOK = 6.0
+TOKENS_PER_PROMPT = 50_000  # control-arm avg from the live A/B
+USD_PER_MTOK = 6.0          # conservative blended Sonnet pricing
 
 
 def load_ledger(root):
@@ -2633,7 +2855,8 @@ def load_ledger(root):
 
 def _bar(frac, width=24):
     frac = max(0.0, min(1.0, frac))
-    return "#" * int(round(frac * width)) + "-" * (width - int(round(frac * width)))
+    filled = int(round(frac * width))
+    return "█" * filled + "░" * (width - filled)
 
 
 def aggregate(rows):
@@ -2641,10 +2864,16 @@ def aggregate(rows):
     tot_hits = sum(r.get("hits", 0) or 0 for r in rows)
     tot_sugg = sum(r.get("suggestions", 0) or 0 for r in rows)
     tot_sugg_files = sum(r.get("suggested_files", 0) or 0 for r in rows)
+    tot_explored = sum(r.get("explored_episodes", 0) or 0 for r in rows)
+    tot_expl_tok = sum(r.get("exploration_tokens", 0) or 0 for r in rows)
+    measured_rows = sum(1 for r in rows if r.get("method") == "measured")
+    measured_saved = sum(r.get("tokens_saved", 0) or 0
+                         for r in rows if r.get("method") == "measured")
     by_day = defaultdict(int)
     for r in rows:
         by_day[r.get("date", "?")] += r.get("tokens_saved", 0) or 0
     days = sorted(d for d in by_day if d and d != "?")
+    # streak: consecutive days up to the most recent ledger day
     streak = 0
     if days:
         from datetime import date, timedelta
@@ -2656,53 +2885,72 @@ def aggregate(rows):
                 cur = cur - timedelta(days=1)
         except ValueError:
             streak = len(days)
+    # this week
     week_saved = 0
     if days:
         from datetime import date, timedelta
         try:
             today = date.fromisoformat(days[-1])
-            wk = today - timedelta(days=6)
+            wk_start = today - timedelta(days=6)
             for d, v in by_day.items():
                 try:
-                    if date.fromisoformat(d) >= wk:
+                    if date.fromisoformat(d) >= wk_start:
                         week_saved += v
                 except ValueError:
                     pass
         except ValueError:
             pass
-    return {"tokens_saved": tot_saved, "hits": tot_hits,
-            "suggestions": tot_sugg, "suggested_files": tot_sugg_files,
-            "sessions": len(rows), "days_active": len(days), "streak": streak,
-            "first_day": days[0] if days else None,
-            "last_day": days[-1] if days else None, "week_saved": week_saved,
-            "by_day": dict(by_day),
-            "hit_rate": (tot_hits / tot_sugg_files) if tot_sugg_files else 0.0}
+    return {
+        "tokens_saved": tot_saved,
+        "hits": tot_hits,
+        "suggestions": tot_sugg,
+        "suggested_files": tot_sugg_files,
+        "sessions": len(rows),
+        "days_active": len(days),
+        "streak": streak,
+        "first_day": days[0] if days else None,
+        "last_day": days[-1] if days else None,
+        "week_saved": week_saved,
+        "by_day": dict(by_day),
+        "hit_rate": (tot_hits / tot_sugg_files) if tot_sugg_files else 0.0,
+        "explored_episodes": tot_explored,
+        "exploration_tokens": tot_expl_tok,
+        "avg_search_cost": (tot_expl_tok / tot_explored) if tot_explored else 0,
+        "measured_rows": measured_rows,
+        "measured_saved": measured_saved,
+        "measured_share": (measured_saved / tot_saved) if tot_saved else 0.0,
+    }
 
 
 def make_card(a):
     saved = a["tokens_saved"]
     usd = saved / 1_000_000 * USD_PER_MTOK
     runway = saved / TOKENS_PER_PROMPT
-    W = 45
+    W = 45  # inner width
 
     def row(s):
-        return "| " + s.ljust(W - 2) + " |"
+        return "│ " + s.ljust(W - 2) + " │"
 
     def center(s):
-        return "|" + s.center(W) + "|"
+        return "│" + s.center(W) + "│"
 
-    return "\n".join([
-        "+" + "-" * W + "+",
-        center("context-os - receipts"),
-        "+" + "-" * W + "+",
-        row(f"{saved:,} tokens saved"),
-        row(f"~${usd:,.2f}  -  ~{runway:.0f} prompts of runway"),
-        row(f"{a['hits']:,} hits over {a['sessions']:,} sessions"),
-        row(f"{a['streak']}-day streak  -  {a['hit_rate']*100:.0f}% hit-rate"),
-        "+" + "-" * W + "+",
-        row("github.com/sravan27/context-os - MIT"),
-        "+" + "-" * W + "+",
-    ])
+    searches = f"{a['hits']:,} search{'es' if a['hits'] != 1 else ''}"
+    third = (f"avg search cost {int(a['avg_search_cost']):,} tok — measured"
+             if a["avg_search_cost"] > 0
+             else f"{a['hits']:,} would-be searches, skipped")
+    lines = [
+        "╭" + "─" * W + "╮",
+        center("context-os · receipts"),
+        "├" + "─" * W + "┤",
+        row(f"{saved:,} tokens saved   (~${usd:,.2f})"),
+        row(f"{searches} replaced by a direct open"),
+        row(third),
+        row(f"~{runway:.0f} prompts of runway  ·  {a['streak']}-day streak"),
+        "├" + "─" * W + "┤",
+        row("github.com/sravan27/context-os · MIT"),
+        "╰" + "─" * W + "╯",
+    ]
+    return "\n".join(lines)
 
 
 def make_report(a):
@@ -2710,34 +2958,76 @@ def make_report(a):
     usd = saved / 1_000_000 * USD_PER_MTOK
     runway = saved / TOKENS_PER_PROMPT
     week_usd = a["week_saved"] / 1_000_000 * USD_PER_MTOK
+    out = []
+    out.append("")
+    out.append("  context-os — your savings")
+    out.append("  " + "─" * 44)
+    out.append("")
     runway_str = f"{runway:,.1f}" if runway < 10 else f"{runway:,.0f}"
-    out = ["", "  context-os - your savings", "  " + "-" * 44, "",
-           f"  All-time saved   {saved:>13,} tokens  (~${usd:,.2f})",
-           f"  This week        {a['week_saved']:>13,} tokens  (~${week_usd:,.2f})",
-           f"  Runway bought    {('~' + runway_str):>13} prompts before the rate window",
-           "",
-           f"  Hits             {a['hits']:>13,}  (files context-os surfaced that you opened)",
-           f"  Hit-rate         {a['hit_rate']*100:>12.0f}%  of suggested files were used  {_bar(a['hit_rate'])}",
-           f"  Sessions         {a['sessions']:>13,}  over {a['days_active']} active days",
-           f"  Streak           {a['streak']:>13}  consecutive days {'(hot)' if a['streak'] >= 3 else ''}"]
+    out.append(f"  All-time saved   {saved:>13,} tokens  (~${usd:,.2f})")
+    out.append(f"  This week        {a['week_saved']:>13,} tokens  "
+               f"(~${week_usd:,.2f})")
+    out.append(f"  Runway bought    {('~' + runway_str):>13} prompts before "
+               f"the rate window")
+    out.append("")
+    out.append(f"  Searches avoided {a['hits']:>13,}  "
+               f"(prompts that opened the right file with no Glob/Grep)")
+    out.append(f"  Sessions         {a['sessions']:>13,}  "
+               f"over {a['days_active']} active days")
+    out.append(f"  Streak           {a['streak']:>13}  "
+               f"consecutive days {'🔥' if a['streak'] >= 3 else ''}")
     if a["first_day"]:
         out.append(f"  Since            {a['first_day']:>13}")
     out.append("")
+
+    # The Boris line: measured, not estimated.
+    if a["avg_search_cost"] > 0:
+        share = a["measured_share"] * 100
+        out.append("  How it's measured")
+        out.append("  " + "─" * 44)
+        out.append(f"  A search cost   {int(a['avg_search_cost']):>13,} tokens "
+                   f"on average — measured")
+        out.append(f"                  from {a['explored_episodes']:,} of your own "
+                   f"prompts that still explored")
+        out.append(f"  {share:.0f}% of the savings above is measured this way "
+                   f"(rest: conservative")
+        out.append("  8k/hit fallback for sessions with nothing to measure).")
+        out.append("")
+
+    # sparkline of last 14 active days
     days = sorted(d for d in a["by_day"] if d and d != "?")
     if days:
         tail = days[-14:]
         vals = [a["by_day"][d] for d in tail]
         mx = max(vals) or 1
-        spark = "".join(" .:-=+*#@"[min(8, int(v / mx * 8))] for v in vals)
+        spark = "".join(
+            " ▁▂▃▄▅▆▇█"[min(8, int(v / mx * 8))] for v in vals
+        )
         out.append(f"  Last {len(tail):>2} days     {spark}")
-        out.append(f"                   {tail[0]} -> {tail[-1]}")
+        out.append(f"                   {tail[0]} → {tail[-1]}")
         out.append("")
+
     out.append("  Shareable card (copy/paste anywhere):")
     out.append("")
     for ln in make_card(a).splitlines():
         out.append("  " + ln)
-    out += ["", "  Note: tokens-saved is a conservative estimate (8k/hit vs ~21k",
-            "  measured in the live A/B). It under-claims on purpose.", ""]
+    out.append("")
+    if a["measured_share"] >= 0.999:
+        out.append("  Note: every token above is measured from your own "
+                   "exploration cost —")
+        out.append("  no estimated constants. It still under-claims (clamped "
+                   "≤15k/search).")
+    elif a["measured_share"] > 0:
+        out.append(f"  Note: {a['measured_share']*100:.0f}% measured from your "
+                   "own exploration cost; the rest")
+        out.append("  uses a conservative 8k/hit fallback. Under-claims on "
+                   "purpose.")
+    else:
+        out.append("  Note: tokens-saved uses a conservative 8k/hit estimate "
+                   "(vs ~21k")
+        out.append("  measured in the live A/B) until a session has searches "
+                   "to measure.")
+    out.append("")
     return "\n".join(out)
 
 
@@ -2747,13 +3037,18 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--card-only", action="store_true")
     args = ap.parse_args()
+
     rows = load_ledger(args.root)
     if not rows:
-        print("\n  context-os - your savings\n  " + "-" * 44 + "\n\n"
-              "  No receipts yet. context-os logs a receipt every time Claude\n"
-              "  opens a file it surfaced for you. Run a few 'where is X'\n"
-              "  prompts and check back after the next Stop event.\n")
+        print(
+            "\n  context-os — your savings\n  " + "─" * 44 + "\n\n"
+            "  No receipts yet. context-os logs a receipt every time Claude\n"
+            "  opens a file it surfaced for you. Run a few prompts that ask\n"
+            "  'where is X' and check back — the savings start accumulating\n"
+            "  on the next Stop event.\n"
+        )
         return 0
+
     a = aggregate(rows)
     if args.json:
         print(json.dumps(a, indent=2))
@@ -2768,6 +3063,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:
+        # Fail-open: a broken report must never break the user's session.
         sys.exit(0)
 CONTEXT_OS_SAVINGS_REPORT_EOF
 chmod +x .context-os/scripts/savings_report.py

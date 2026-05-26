@@ -52,6 +52,11 @@ def aggregate(rows):
     tot_hits = sum(r.get("hits", 0) or 0 for r in rows)
     tot_sugg = sum(r.get("suggestions", 0) or 0 for r in rows)
     tot_sugg_files = sum(r.get("suggested_files", 0) or 0 for r in rows)
+    tot_explored = sum(r.get("explored_episodes", 0) or 0 for r in rows)
+    tot_expl_tok = sum(r.get("exploration_tokens", 0) or 0 for r in rows)
+    measured_rows = sum(1 for r in rows if r.get("method") == "measured")
+    measured_saved = sum(r.get("tokens_saved", 0) or 0
+                         for r in rows if r.get("method") == "measured")
     by_day = defaultdict(int)
     for r in rows:
         by_day[r.get("date", "?")] += r.get("tokens_saved", 0) or 0
@@ -96,6 +101,12 @@ def aggregate(rows):
         "week_saved": week_saved,
         "by_day": dict(by_day),
         "hit_rate": (tot_hits / tot_sugg_files) if tot_sugg_files else 0.0,
+        "explored_episodes": tot_explored,
+        "exploration_tokens": tot_expl_tok,
+        "avg_search_cost": (tot_expl_tok / tot_explored) if tot_explored else 0,
+        "measured_rows": measured_rows,
+        "measured_saved": measured_saved,
+        "measured_share": (measured_saved / tot_saved) if tot_saved else 0.0,
     }
 
 
@@ -111,15 +122,18 @@ def make_card(a):
     def center(s):
         return "│" + s.center(W) + "│"
 
+    searches = f"{a['hits']:,} search{'es' if a['hits'] != 1 else ''}"
+    third = (f"avg search cost {int(a['avg_search_cost']):,} tok — measured"
+             if a["avg_search_cost"] > 0
+             else f"{a['hits']:,} would-be searches, skipped")
     lines = [
         "╭" + "─" * W + "╮",
         center("context-os · receipts"),
         "├" + "─" * W + "┤",
-        row(f"{saved:,} tokens saved"),
-        row(f"~${usd:,.2f}  ·  ~{runway:.0f} prompts of runway"),
-        row(f"{a['hits']:,} hits over {a['sessions']:,} sessions"),
-        row(f"{a['streak']}-day streak  ·  "
-            f"{a['hit_rate']*100:.0f}% hit-rate"),
+        row(f"{saved:,} tokens saved   (~${usd:,.2f})"),
+        row(f"{searches} replaced by a direct open"),
+        row(third),
+        row(f"~{runway:.0f} prompts of runway  ·  {a['streak']}-day streak"),
         "├" + "─" * W + "┤",
         row("github.com/sravan27/context-os · MIT"),
         "╰" + "─" * W + "╯",
@@ -144,10 +158,8 @@ def make_report(a):
     out.append(f"  Runway bought    {('~' + runway_str):>13} prompts before "
                f"the rate window")
     out.append("")
-    out.append(f"  Hits             {a['hits']:>13,}  "
-               f"(files context-os surfaced that you opened)")
-    out.append(f"  Hit-rate         {a['hit_rate']*100:>12.0f}%  "
-               f"of suggested files were used  {_bar(a['hit_rate'])}")
+    out.append(f"  Searches avoided {a['hits']:>13,}  "
+               f"(prompts that opened the right file with no Glob/Grep)")
     out.append(f"  Sessions         {a['sessions']:>13,}  "
                f"over {a['days_active']} active days")
     out.append(f"  Streak           {a['streak']:>13}  "
@@ -155,6 +167,20 @@ def make_report(a):
     if a["first_day"]:
         out.append(f"  Since            {a['first_day']:>13}")
     out.append("")
+
+    # The Boris line: measured, not estimated.
+    if a["avg_search_cost"] > 0:
+        share = a["measured_share"] * 100
+        out.append("  How it's measured")
+        out.append("  " + "─" * 44)
+        out.append(f"  A search cost   {int(a['avg_search_cost']):>13,} tokens "
+                   f"on average — measured")
+        out.append(f"                  from {a['explored_episodes']:,} of your own "
+                   f"prompts that still explored")
+        out.append(f"  {share:.0f}% of the savings above is measured this way "
+                   f"(rest: conservative")
+        out.append("  8k/hit fallback for sessions with nothing to measure).")
+        out.append("")
 
     # sparkline of last 14 active days
     days = sorted(d for d in a["by_day"] if d and d != "?")
@@ -174,9 +200,21 @@ def make_report(a):
     for ln in make_card(a).splitlines():
         out.append("  " + ln)
     out.append("")
-    out.append("  Note: tokens-saved is a conservative estimate "
-               "(8k/hit vs ~21k")
-    out.append("  measured in the live A/B). It under-claims on purpose.")
+    if a["measured_share"] >= 0.999:
+        out.append("  Note: every token above is measured from your own "
+                   "exploration cost —")
+        out.append("  no estimated constants. It still under-claims (clamped "
+                   "≤15k/search).")
+    elif a["measured_share"] > 0:
+        out.append(f"  Note: {a['measured_share']*100:.0f}% measured from your "
+                   "own exploration cost; the rest")
+        out.append("  uses a conservative 8k/hit fallback. Under-claims on "
+                   "purpose.")
+    else:
+        out.append("  Note: tokens-saved uses a conservative 8k/hit estimate "
+                   "(vs ~21k")
+        out.append("  measured in the live A/B) until a session has searches "
+                   "to measure.")
     out.append("")
     return "\n".join(out)
 

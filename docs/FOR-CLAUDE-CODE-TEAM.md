@@ -61,11 +61,22 @@ The one loss (psf/requests) is honest: prompts in that set use exact class names
 - **9 CI-enforced regression gates** (`ranker_floor.py`) — retrieval quality cannot silently regress
 - 8-signal leave-one-out ablation confirms no dead weight
 
+**Receipts — per-session causal measurement (v2.9):**
+
+The piece I'm most interested in your read on. A Stop hook (`savings_tracker.py`) reconstructs each prompt's first-turn behaviour from the transcript and classifies it:
+- **assisted** — Claude's first tool action was a `Read` of a file auto_context surfaced, with no `Glob`/`Grep` first (an exploration *replaced*);
+- **explored** — it searched before finding the target. The exploration's token cost is read directly off the real `tool_result` sizes.
+
+Each avoided search is then credited the *measured average cost of an exploration in that same session* — not a constant. ("A search cost ~14.2k tokens here, measured across 287 prompts that still explored; context-os turned 412 into direct opens.") When a session has no exploration to calibrate against, it falls back to a labelled 8k estimate; the per-search credit is clamped ≤15k so the total under-claims vs the 21k aggregate the A/B measured. This is the honest, in-the-product version of the live A/B — every user gets a measured receipt on their own repo, surfaced via `/savings` + a statusLine meter. Correctness is a 29-assertion CI gate (`savings_test.py`).
+
+I think this is what a *shipped* version of this looks like: not "trust our benchmark," but "here's what it saved *you*, measured."
+
 ### How it works (30-second version)
 
 1. `build_repo_graph.py` walks the source tree once (≤1s on 10k files), extracts symbols + imports + git-hot files via regex, writes `.context-os/repo-graph.json`.
 2. `auto_context.py` is a `UserPromptSubmit` hook: extracts identifier/path tokens from the prompt, scores candidates from the graph (IDF-weighted symbol + path matches, basename-in-prompt detection, multi-token coverage bonus, import traversal, hot-file boost, test/hub-file penalties), emits a ≤50-token block.
 3. Claude sees the block *before* its first turn. Instead of `Glob → Grep → Read → Read → Read`, it usually goes straight to `Read` on the right file.
+4. At session end, `savings_tracker.py` measures how often that happened and what the searches it replaced actually cost — a receipt, not a claim.
 
 ### The ask
 

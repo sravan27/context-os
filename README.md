@@ -82,33 +82,41 @@ crates/ignore/src/gitignore.rs:118 · matched (fn) · imports: …
 claude: Read crates/ignore/src/gitignore.rs → done
 ```
 
-## Your savings, made visible
+## Your savings, measured — not estimated
 
-Saving 40% silently builds no habit. So context-os keeps a receipt. Every time
-Claude opens a file the hook surfaced, that's a *hit* — an exploration it
-skipped. A Stop hook tallies them; the statusLine shows a live meter; `/savings`
-shows the rest:
+Saving 40% silently builds no habit. So context-os keeps a receipt — and it
+**measures** the saving causally from your own transcript, it doesn't guess.
+
+Every prompt is classified: did Claude open the right file *first* (a search
+**avoided**), or did it Glob/Grep around before finding it (an **exploration**)?
+The exploration cost is read straight off the real `tool_result` sizes — so each
+avoided search is credited the average a search *actually cost in your session*.
+A Stop hook does this; the statusLine shows a live meter; `/savings` shows the rest:
 
 ```
 💰 2.3M saved · 5d🔥        ← statusLine, every prompt
 
 $ /savings
   All-time saved      2,340,000 tokens  (~$14.04)
-  This week             612,000 tokens  (~$3.67)
   Runway bought            ~47 prompts before the rate window
-  Hits                        412  (files context-os surfaced that you opened)
-  Hit-rate                    71%  ███████████████████░░░░░
-  Streak                        5  consecutive days 🔥
+  Searches avoided            412  (opened the right file with no Glob/Grep)
+
+  How it's measured
+  A search cost        14,200 tokens on average — measured
+                       from 287 of your own prompts that still explored
+  100% of the savings above is measured this way.
   ╭─────────────────────────────────────────────╮
   │            context-os · receipts            │
-  │  2,340,000 tokens saved                     │
-  │  ~$14.04  ·  ~47 prompts of runway          │
-  │  412 hits over 38 sessions                  │
+  │  2,340,000 tokens saved   (~$14.04)         │
+  │  412 searches replaced by a direct open     │
+  │  avg search cost 14,200 tok — measured      │
   ╰─────────────────────────────────────────────╯   ← copy/paste anywhere
 ```
 
-Local-only, no phone-home. Tokens-saved is conservative (8k/hit vs the ~21k
-measured in the live A/B) — it under-claims on purpose.
+Local-only, no phone-home. The credit per avoided search is clamped to ≤15k
+(below the 21k aggregate the live A/B measured), and sessions with nothing to
+measure fall back to a labelled 8k estimate — so the number under-claims, never
+over-claims. Correctness is CI-gated (`python3 python/evals/runners/savings_test.py`, 29 assertions).
 
 ## Install
 
