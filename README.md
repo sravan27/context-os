@@ -8,7 +8,7 @@
 
 No embeddings. No server. No model call. ~50 ms.
 
-Need this applied to a private repo this week? [Fund the $1,000 48-hour implementation sprint](https://buy.polar.sh/polar_cl_z0eLsPUJeMwrcNs4MQPAQbKIM3Rbdb8fLDgVj2RZcmr) or read the [audit scope](https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html). The OSS tool stays free; the sprint is for teams that want a private report, CI leak gate, and one concrete repo/workflow patch.
+Need this applied to a private repo this week? I have **2 paid audit slots open**. [Fund the $1,000 AI Agent Cost Leak Audit](https://buy.polar.sh/polar_cl_z0eLsPUJeMwrcNs4MQPAQbKIM3Rbdb8fLDgVj2RZcmr) or read the [audit scope](https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html). The OSS tool stays free; the sprint is for teams that want a private report, CI leak gate, and one concrete repo/workflow patch.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash
@@ -20,7 +20,9 @@ curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh |
 
 ## Private repo audit
 
-If your team is already spending heavily on Claude Code, Codex, Cursor, or other coding agents and wants a private cost-leak report, I am doing a small number of 48-hour audits this week: [AI Agent Cost Leak Audit](https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html).
+If your team is already spending heavily on Claude Code, Codex, Cursor, or other coding agents and wants a private cost-leak report, I am doing **2 paid 48-hour audits** this week: [AI Agent Cost Leak Audit](https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html).
+
+Payment starts the slot. After checkout, send repo/access details by email or private intake; do not paste private code into a public issue.
 
 The open-source hook stays MIT and free. The paid audit is for teams that want the same measurement discipline applied to their own repo, prompts, and agent workflows.
 
