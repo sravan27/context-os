@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.9.0"
+VERSION="2.9.2"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
