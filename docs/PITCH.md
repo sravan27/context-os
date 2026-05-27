@@ -7,7 +7,9 @@ For the 20-minute version see [`PROPOSAL.md`](PROPOSAL.md). For reviewer walkthr
 
 ## The claim
 
-**A ~400-line stdlib Python hook cuts Claude Code token spend by 40.9% on live, real workloads.** We have the receipts; the hook is MIT-licensed; everything in this document is reproducible in a CI run on GitHub Actions.
+**A ~400-line stdlib Python hook makes Claude Code's first turn open the right file instead of grepping for it — provably good retrieval (CI-gated), with a measured −40.9% tokens on a cold-cache `claude --print` A/B (N=36).** The hook is MIT-licensed; everything here is reproducible in CI.
+
+**Read the −40.9% precisely:** it's cold-cache one-shots — the right setup to *isolate* the hook, but not a warm interactive session, where prompt caching makes re-sent context cheap and the dollar delta is smaller. The version-independent, durable wins are **fewer first-turn tool calls** and **hitting the context limit / compaction later**. The bankable claim is retrieval quality (below); the bill-savings number is directional, not a promise.
 
 ---
 
@@ -19,9 +21,9 @@ For the 20-minute version see [`PROPOSAL.md`](PROPOSAL.md). For reviewer walkthr
 | Wall-clock per prompt (mean) | 11.80s | 7.64s |
 | Tool calls in first turn (mean) | 3.44 | 1.89 |
 
-**−40.9% aggregate tokens · −35.3% wall-clock · p=5.06e-07 · Cohen's d=1.84.**
+**−40.9% aggregate tokens · −35.3% wall-clock · p=5.06e-07 · Cohen's d=1.84** — on **cold-cache `claude --print`** one-shots (N=36, isolates the hook; not a warm-session bill figure).
 
-Applied at Claude Code's scale that's a material change to per-user cost *and* perceived latency, without touching the model, the API, or the user's workflow.
+The number that travels across versions and warm/cold is the **−1.55 first-turn tool calls** (3.44 → 1.89): the hook reliably removes the exploratory Glob/Grep/Read chain. In a warm session that mostly buys you *later compaction and fewer rate-limit walls*, not a 41% smaller bill (caching). Honest framing beats a number that doesn't survive the first skeptical question.
 
 ---
 

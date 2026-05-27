@@ -195,11 +195,13 @@ Reports (all reproducible, all run in CI on every PR):
 
 ## Cost model for Anthropic
 
-### Per-call savings (measured)
+### Per-call savings (measured — cold cache)
 
 - Control (no hook): **51,000 tokens** avg per `--print` call on our 6-prompt fixture.
 - Treatment (with hook): **30,000 tokens** avg.
 - Delta: **−21,000 tokens / call** (−40.9%), p=5.06e-07, Cohen's d=1.84.
+
+> **Important caveat for the model below.** These are **cold-cache `--print`** one-shots — every call pays full cache creation, so the full file-exploration cost is "fresh." A **warm interactive session reuses cache across turns**, so the re-sent portion is cheap cache-reads and the *dollar* delta is much smaller than 40.9%. The scaling below is therefore an **upper bound**; the honest realistic figure after caching is a fraction of it. Treat the durable claim as "removes first-turn exploration" — the dollar headline is illustrative, not a forecast.
 
 ### Back-of-envelope scaling to Claude Code's user base
 
@@ -214,7 +216,7 @@ Assumptions (conservative, round numbers):
 | Cost / user / month (platform) | $120 | $71 | **−$49** |
 | **Across 1M users / year** | — | — | **~$588M** |
 
-Even discounted 90% for cache reuse, cohort overlap, smaller sessions, and power-user skew, the savings are in the **low-nine-figures per year**. That's the upper-bound — the lower-bound is still much larger than any reasonable acquisition price.
+This is the **upper bound** and should be read as one. The biggest discount is warm-session prompt caching (above): the −40.9% is cold-cache, and in real sessions most of the "saved" re-sent context would have been cheap cache-reads anyway. Discount aggressively for that plus cohort overlap, smaller sessions, and power-user skew, and the realistic recurring figure is a **fraction** of $588M — still real and worth an engineer-week to capture, but not a nine-figure certainty. The honest pitch is "free, measurable efficiency + later compaction," not "we save you $588M."
 
 ### Install + storage cost
 
