@@ -150,7 +150,21 @@ $ /savings
 Local-only, no phone-home. The credit per avoided search is clamped to ≤15k
 (below the 21k aggregate the live A/B measured), and sessions with nothing to
 measure fall back to a labelled 8k estimate — so the number under-claims, never
-over-claims. Correctness is CI-gated (`python3 python/evals/runners/savings_test.py`, 29 assertions).
+over-claims. Correctness is CI-gated (`python3 python/evals/runners/savings_test.py`, 39 assertions).
+
+**Don't trust my A/B — replay it on *your own* history (no API key, $0):**
+
+```bash
+python3 python/evals/runners/replay_history.py --all
+```
+
+Scans your existing `~/.claude/projects/**/*.jsonl` transcripts and backtests
+the whole stack: how many whole-file reads smart_read would have sliced (load
+sizes measured exactly from your transcripts) and how many explorations
+auto_context's top-5 would have collapsed. It's a counterfactual, not a live
+A/B — and it's honest that results depend on your session mix (navigation-heavy
+interactive work is the regime these hooks target; long autonomous build runs
+show less).
 
 ## Install
 
