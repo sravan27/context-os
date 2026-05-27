@@ -4,9 +4,11 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/sravan27/context-os?label=release)](https://github.com/sravan27/context-os/releases/latest)
 
-**Cut Claude Code token usage by 40.9%.** A 400-line Python hook that builds a static graph of your repo (symbols + imports + git-hot files) and injects ranked `file:line` candidates into the prompt before Claude sees it. So the first turn opens the right file instead of grepping for it.
+**Claude Code's first turn opens the right file instead of grepping for it.** A 400-line Python hook builds a static graph of your repo (symbols + imports + git-hot files) and injects ranked `file:line` candidates into the prompt before Claude's first turn — so it skips the `Glob → Grep → Read → Read → Read` hunt and goes straight to the file.
 
 No embeddings. No server. No model call. ~50 ms.
+
+**What's proven vs. what to expect.** Retrieval quality is measured and CI-gated (MRR 0.984 synthetic, 0.756 on this repo, beats BM25 — see below). A `--print` A/B showed **−40.9% tokens (N=36, cold-cache, earlier build, p=5e-7)**. Honest caveat: that bench is cold-cache one-shots; in a *warm* interactive session, prompt caching makes re-sent context cheap, so your **dollar** savings are smaller than 40.9% — the durable wins are fewer first-turn tool calls and hitting context limits/compaction later. Don't take our number — **replay it on your own history (no API key): `python3 python/evals/runners/replay_history.py`.**
 
 Need this applied to a private repo this week? I have **2 paid audit slots open**. [Fund the $1,000 AI Agent Cost Leak Audit](https://buy.polar.sh/polar_cl_z0eLsPUJeMwrcNs4MQPAQbKIM3Rbdb8fLDgVj2RZcmr) or read the [audit scope](https://sravan27.github.io/money-27-proof/agent-cost-leak-audit.html). The OSS tool stays free; the sprint is for teams that want a private report, CI leak gate, and one concrete repo/workflow patch.
 
@@ -60,6 +62,8 @@ Live A/B on 36 real `claude --print` calls, identical fixture, identical model, 
 | Bootstrap 95% CI                 |  32.7%–48.9% |
 | Paired t-test                    |   p = 5.1e-7 |
 | Wall-clock                       |       −35.3% |
+
+**Read this number honestly:** these are **cold-cache `--print` one-shots** (Claude Code pays full cache creation per call — see [`METHODOLOGY.md`](docs/METHODOLOGY.md)). That's the right setup to isolate the hook's effect, but it's *not* your warm interactive session: there, prompt caching makes re-sent context cheap, so the **dollar** delta is smaller. It's also N=36 on one repo, on an earlier build. Treat it as "the hook clearly removes first-turn exploration," not "you'll save 41% on your bill." The version-independent, CI-gated claim is the retrieval quality below.
 
 Raw JSON for every call: [`python/evals/reports/live-session-bench-raw.json`](python/evals/reports/live-session-bench-raw.json) · methodology: [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
