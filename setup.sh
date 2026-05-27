@@ -2678,7 +2678,10 @@ def load_suggestions(savings_dir, session_id, cwd):
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if session_id and rec.get("session") != session_id:
+            # auto_context logs session as session_id[:12]; match the same way
+            # (read_slices does too). Comparing the full UUID silently drops
+            # every suggestion → 0 assisted hits.
+            if session_id and rec.get("session") != session_id[:12]:
                 continue
             n += 1
             ts = rec.get("ts")

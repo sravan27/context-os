@@ -168,6 +168,31 @@ def test_estimate_fallback_when_no_exploration():
         check("estimate: 1 assisted hit", rows[0]["hits"] == 1)
 
 
+def test_long_uuid_session_id():
+    """Regression: auto_context logs session_id[:12]; the tracker must match
+    on [:12], not the full UUID, or every suggestion is silently dropped
+    (0 assisted hits — the live dogfood bug)."""
+    root = tempfile.mkdtemp(prefix="cos-uuid-")
+    full = "f5e1e4be-7a73-41c9-a287-a0ef97d13745"   # 36-char UUID
+    sav = os.path.join(root, ".context-os", "savings")
+    os.makedirs(sav, exist_ok=True)
+    # auto_context writes the TRUNCATED id, as the real hook does
+    with open(os.path.join(sav, "suggestions.jsonl"), "a") as f:
+        f.write(json.dumps({"ts": 1.0, "session": full[:12],
+                            "files": ["pkg/a.py"]}) + "\n")
+    tp = os.path.join(root, "t.jsonl")
+    write_transcript(tp, [
+        ("where is a", [("Read", os.path.join(root, "pkg/a.py"), 300)]),
+    ])
+    # tracker receives the FULL session id from Claude Code
+    run_tracker({"transcript_path": tp, "session_id": full, "cwd": root})
+    rows = ledger_rows(root)
+    check("uuid-session: suggestion matched despite 36-char id", bool(rows))
+    if rows:
+        check("uuid-session: assisted hit credited (was 0 in the live bug)",
+              rows[0]["hits"] == 1)
+
+
 def test_session_isolation():
     root = tempfile.mkdtemp(prefix="cos-m4-")
     setup_session(root, "sA", ["x/a.py"])
@@ -359,6 +384,7 @@ def main():
     test_measured_assisted_vs_explored()
     test_glob_before_read_not_assisted()
     test_estimate_fallback_when_no_exploration()
+    test_long_uuid_session_id()
     test_session_isolation()
     test_no_suggestions_no_op()
     test_milestone_and_streak()
