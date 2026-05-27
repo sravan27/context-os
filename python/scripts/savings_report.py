@@ -56,6 +56,7 @@ def aggregate(rows):
     tot_expl_tok = sum(r.get("exploration_tokens", 0) or 0 for r in rows)
     tot_slices = sum(r.get("slices", 0) or 0 for r in rows)
     tot_slice_saved = sum(r.get("slice_saved", 0) or 0 for r in rows)
+    tot_budget_freed = sum(r.get("budget_freed", 0) or 0 for r in rows)
     tot_search_saved = sum(r.get("search_saved",
                                  r.get("tokens_saved", 0)) or 0 for r in rows)
     measured_rows = sum(1 for r in rows if r.get("method") == "measured")
@@ -114,6 +115,7 @@ def aggregate(rows):
         "slices": tot_slices,
         "slice_saved": tot_slice_saved,
         "search_saved": tot_search_saved,
+        "budget_freed": tot_budget_freed,
     }
 
 
@@ -164,6 +166,11 @@ def make_report(a):
                f"(~${week_usd:,.2f})")
     out.append(f"  Runway bought    {('~' + runway_str):>13} prompts before "
                f"the rate window")
+    if a.get("budget_freed", 0):
+        out.append(f"  Budget freed     {a['budget_freed']:>13,} tokens  "
+                   f"(file bodies not re-sent every turn until compaction;")
+        out.append(f"  {'':>17}      cache-discounted in $, full in context "
+                   f"budget — the compounding win)")
     out.append("")
     out.append(f"  Searches avoided {a['hits']:>13,}  "
                f"(prompts that opened the right file with no Glob/Grep)")

@@ -359,6 +359,33 @@ def test_smart_read_passthrough():
     check("smart_read: CONTEXT_OS_SMART_READ=0 disables (exit 0)", r3.returncode == 0)
 
 
+def test_occupancy_compounding():
+    """smart_read's compounding win: a sliced file read early persists across
+    the turns that follow → budget_freed = saved × remaining turns (capped)."""
+    root = tempfile.mkdtemp(prefix="cos-occ-")
+    sav = os.path.join(root, ".context-os", "savings")
+    os.makedirs(sav)
+    with open(os.path.join(sav, "slices.jsonl"), "w") as f:
+        f.write(json.dumps({"ts": 1, "session": "occ", "file": "big.py",
+                            "full_tokens": 20000, "outline_tokens": 1000,
+                            "saved": 19000}) + "\n")
+    # transcript: read big.py at turn 1, then 5 more assistant turns
+    tp = os.path.join(root, "t.jsonl")
+    eps = [("read big", [("Read", os.path.join(root, "big.py"), 20000)])]
+    for i in range(5):
+        eps.append((f"step {i}", [("Edit", os.path.join(root, "big.py"), 50)]))
+    write_transcript(tp, eps)
+    run_tracker({"transcript_path": tp, "session_id": "occ", "cwd": root})
+    rows = ledger_rows(root)
+    check("occupancy: ledger row written", bool(rows))
+    if rows:
+        bf = rows[0].get("budget_freed", 0)
+        # read at turn 1, ~6 total turns → remaining ~5 → 19000*5 = 95000 (capped 60)
+        check("occupancy: budget_freed > first-load saving", bf > 19000)
+        check("occupancy: scales with remaining turns (≈saved×remaining)",
+              50000 <= bf <= 120000)
+
+
 def test_slices_feed_receipts():
     root = tempfile.mkdtemp(prefix="cos-sr3-")
     sav = os.path.join(root, ".context-os", "savings")
@@ -392,6 +419,7 @@ def main():
     test_report_surfaces_measurement()
     test_smart_read_offers_outline()
     test_smart_read_passthrough()
+    test_occupancy_compounding()
     test_slices_feed_receipts()
     print()
     if _fails:

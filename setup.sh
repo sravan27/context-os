@@ -5,7 +5,7 @@
 # Uninstall: curl -fsSL https://raw.githubusercontent.com/sravan27/context-os/main/setup.sh | bash -s -- --uninstall
 set -euo pipefail
 
-VERSION="2.10.0"
+VERSION="2.10.1"
 
 # ============================================================================
 # --measure: Estimate token savings on the current project (shareable)
@@ -2760,11 +2760,13 @@ def analyze(episodes, sugg_items, sugg_union):
 
 def read_slices(savings_dir, session_id):
     """Sum tokens smart_read kept out of context this session (whole-file
-    reads it turned into outlines). Returns (saved, count)."""
+    reads it turned into outlines). Returns (saved, count, by_file) where
+    by_file maps the sliced file (as smart_read logged it) -> saved tokens."""
     f = savings_dir / "slices.jsonl"
     if not f.exists():
-        return 0, 0
+        return 0, 0, {}
     saved = n = 0
+    by_file = {}
     try:
         for line in f.open("r", encoding="utf-8", errors="replace"):
             try:
@@ -2773,11 +2775,62 @@ def read_slices(savings_dir, session_id):
                 continue
             if session_id and rec.get("session") != session_id[:12]:
                 continue
-            saved += rec.get("saved", 0) or 0
+            s = rec.get("saved", 0) or 0
+            saved += s
             n += 1
+            fl = rec.get("file")
+            if fl:
+                by_file[fl] = max(by_file.get(fl, 0), s)
     except OSError:
         pass
-    return saved, n
+    return saved, n, by_file
+
+
+def compute_occupancy(transcript, by_file, cap):
+    """The compounding win, measured from the real transcript: a sliced file's
+    body would have been re-sent on every turn until compaction. For each
+    sliced file, find the turn it was first read and multiply its kept-out
+    tokens by the turns that followed (capped at an inter-compaction window so
+    one pathologically long session can't distort it). Re-sends are cache-
+    discounted in $ but full in context budget. Returns total tokens."""
+    if not by_file:
+        return 0
+    try:
+        lines = Path(transcript).open("r", encoding="utf-8",
+                                      errors="replace").readlines()
+    except OSError:
+        return 0
+    turns = 0
+    first_turn = {}
+    for line in lines:
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = evt.get("message") or {}
+        if msg.get("usage") or evt.get("usage"):
+            turns += 1
+        content = msg.get("content") or []
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_use" \
+                    and b.get("name") == "Read":
+                fp = os.path.normpath((b.get("input") or {}).get("file_path", ""))
+                if not fp:
+                    continue
+                for rel in by_file:
+                    if rel in first_turn:
+                        continue
+                    r = rel.replace(os.sep, "/")
+                    if fp.endswith("/" + r) or fp == r or \
+                            os.path.basename(fp) == os.path.basename(r):
+                        first_turn[rel] = turns
+    occ = 0
+    for rel, tn in first_turn.items():
+        remaining = max(0, turns - tn)
+        occ += by_file[rel] * min(remaining, cap)
+    return occ
 
 
 def load_total(savings_dir):
@@ -2824,14 +2877,22 @@ def main():
     if not transcript or not os.path.exists(transcript):
         return 0
 
+    try:
+        cap = int(os.environ.get("CONTEXT_OS_SAVINGS_COMPACT_WINDOW", "60"))
+    except ValueError:
+        cap = 60
+
     savings_dir = Path(cwd) / SAVINGS_DIR_NAME
     sugg_items, sugg_union, n_sugg = load_suggestions(savings_dir, session_id, cwd)
-    slice_saved, n_slices = read_slices(savings_dir, session_id)
+    slice_saved, n_slices, slice_by_file = read_slices(savings_dir, session_id)
     if n_sugg == 0 and n_slices == 0:
         return 0  # neither auto_context nor smart_read fired this session
 
     episodes, total_tokens, turns = parse_transcript(transcript)
     a = analyze(episodes, sugg_items, sugg_union)
+    # Compounding win (kept separate from the conservative headline): file
+    # bodies that would have been re-sent every turn until compaction.
+    budget_freed = compute_occupancy(transcript, slice_by_file, cap)
 
     # Per-hit credit: measured if we have an exploration baseline, else estimate.
     if env_per_hit:
@@ -2870,6 +2931,7 @@ def main():
         "avg_search_cost": round(a["avg_search_cost"]),
         "per_hit": per_hit, "method": method,
         "slices": n_slices, "slice_saved": slice_saved,
+        "budget_freed": budget_freed,
         "search_saved": search_saved,
         "turns": turns, "session_tokens": total_tokens,
         "tokens_saved": tokens_saved,
@@ -2891,6 +2953,7 @@ def main():
         "measured_sessions": (prev.get("measured_sessions", 0) or 0)
         + (1 if method == "measured" else 0),
         "slices": (prev.get("slices", 0) or 0) + n_slices,
+        "budget_freed": (prev.get("budget_freed", 0) or 0) + budget_freed,
         "first_date": prev.get("first_date") or today,
         "last_date": today, "streak": streak,
         "milestone": crossed or prev.get("milestone", 0),
@@ -2919,9 +2982,11 @@ def main():
             parts.append(
                 f"{n_slices} big file{'s' if n_slices != 1 else ''} read as an "
                 f"outline, not whole ({slice_saved:,} tok kept out of context)")
+        extra = (f" + ~{budget_freed:,} tok of context budget freed "
+                 f"(re-sends avoided until compaction)" if budget_freed > 0 else "")
         print(
             f"[context-os] receipt: " + "; ".join(parts) +
-            f" → ~{tokens_saved:,} tokens saved. "
+            f" → ~{tokens_saved:,} tokens saved{extra}. "
             f"All-time: {new_total:,} tok (~${usd:,.2f}) · {streak}-day streak. "
             f"/savings for the breakdown.",
             file=sys.stderr,
@@ -3228,6 +3293,7 @@ def aggregate(rows):
     tot_expl_tok = sum(r.get("exploration_tokens", 0) or 0 for r in rows)
     tot_slices = sum(r.get("slices", 0) or 0 for r in rows)
     tot_slice_saved = sum(r.get("slice_saved", 0) or 0 for r in rows)
+    tot_budget_freed = sum(r.get("budget_freed", 0) or 0 for r in rows)
     tot_search_saved = sum(r.get("search_saved",
                                  r.get("tokens_saved", 0)) or 0 for r in rows)
     measured_rows = sum(1 for r in rows if r.get("method") == "measured")
@@ -3286,6 +3352,7 @@ def aggregate(rows):
         "slices": tot_slices,
         "slice_saved": tot_slice_saved,
         "search_saved": tot_search_saved,
+        "budget_freed": tot_budget_freed,
     }
 
 
@@ -3336,6 +3403,11 @@ def make_report(a):
                f"(~${week_usd:,.2f})")
     out.append(f"  Runway bought    {('~' + runway_str):>13} prompts before "
                f"the rate window")
+    if a.get("budget_freed", 0):
+        out.append(f"  Budget freed     {a['budget_freed']:>13,} tokens  "
+                   f"(file bodies not re-sent every turn until compaction;")
+        out.append(f"  {'':>17}      cache-discounted in $, full in context "
+                   f"budget — the compounding win)")
     out.append("")
     out.append(f"  Searches avoided {a['hits']:>13,}  "
                f"(prompts that opened the right file with no Glob/Grep)")

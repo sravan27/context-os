@@ -1,7 +1,7 @@
 {
   "name": "context-os",
-  "description": "Claude Code context optimizer. Builds a local static repo graph, injects ranked file:line candidates through a UserPromptSubmit hook, and adds a SessionStart prewarm brief. No embeddings, no server, no telemetry. Measured live A/B: 40.9% aggregate token reduction across 36 Claude Code calls. v2.10 structural slicing: a PreToolUse hook intercepts whole-file reads and hands Claude the file's outline (symbols + exact line ranges from the graph) so it reads the 40 lines it needs, not 800 that get re-sent every turn. Receipts (/savings) measure both sources — searches avoided and big reads sliced — causally from your transcript.",
-  "version": "2.10.0",
+  "description": "Claude Code context optimizer. Builds a local static repo graph, injects ranked file:line candidates through a UserPromptSubmit hook, and adds a SessionStart prewarm brief. No embeddings, no server, no telemetry. Measured live A/B: 40.9% aggregate token reduction across 36 Claude Code calls. v2.10 structural slicing: a PreToolUse hook intercepts whole-file reads and hands Claude the file's outline (symbols + exact line ranges from the graph) so it reads the 40 lines it needs, not 800 that get re-sent every turn. Receipts (/savings) measure both sources \u2014 searches avoided and big reads sliced \u2014 causally from your transcript.",
+  "version": "2.10.1",
   "author": {
     "name": "sravan27",
     "url": "https://github.com/sravan27"
