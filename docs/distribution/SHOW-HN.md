@@ -2,18 +2,19 @@
 
 ## Title (pick ONE — A/B value listed)
 
-**Recommended:**
-> **Show HN: A 400-line Python hook cuts Claude Code token usage 40.9% (live A/B, p=5e-7)**
+**Recommended (honest framing — HN punishes a number it can poke holes in):**
+> **Show HN: A 400-line hook so Claude Code opens the right file instead of grepping for it**
 
-Alternatives, ordered by likely uplift:
-- Show HN: I cut my Claude Code token bill 40.9% with a 400-line Python hook
-- Show HN: Static-analysis RAG for Claude Code — −40.9% tokens, no embeddings
-- Show HN: Context OS – a Claude Code hook that beats BM25 across 36 prompts × 3 OSS repos
+Alternatives:
+- Show HN: Static-analysis RAG for Claude Code — skip the first-turn Glob/Grep hunt (MIT, no embeddings)
+- Show HN: I gave Claude Code a repo map so its first turn opens the right file
 
-Title rules learned from research (`/docs/distribution/RESEARCH.md`):
-- Specific number in the title (40.9%, 400-line)
-- First-person motivation ("my", "I")
-- One striking technical claim that signals rigor (p=5e-7)
+**Do NOT lead the title with "−40.9%".** It's a cold-cache `--print` A/B (N=36, earlier build); the first HN comment will be "warm session? caching?" and if the number is the headline, the thread becomes about defending it. Lead with the mechanism (provably good retrieval), put the number in the body *with* the caveat, and you look rigorous instead of salesy.
+
+Title rules (from `/docs/distribution/RESEARCH.md`):
+- Specific + concrete (400-line, "right file")
+- First-person motivation
+- A claim you can defend without an asterisk
 
 ## URL
 
@@ -32,25 +33,27 @@ the repo (symbols, imports, git-hot files) and injects ranked file:line
 candidates into the prompt before Claude sees it. Stdlib Python, ~400 lines.
 No embeddings, no server, no model call.
 
-Receipts (all reproducible from one command):
+What's measured (and what it does/doesn't mean):
 
-  - Live A/B on 36 real `claude --print` calls (6 prompts × 3 runs × 2 arms):
-    −40.9% aggregate tokens [bootstrap CI 32.7%, 48.9%], 6/6 prompt wins,
-    paired t-test p = 5.06e-07, Cohen's d = 1.84, wall-clock −35.3%.
+  - Retrieval quality (the durable, version-independent claim): MRR 0.984 on
+    synthetic Py/TS/Rust, 0.756 on this repo, and on 36 hand-labeled prompts
+    across 3 unseen OSS repos (axios/ripgrep/requests) it beats BM25 in every
+    language (weighted MRR 0.545 vs 0.461). CI-gated — quality can't regress.
 
-  - Cross-repo: 36 hand-labeled prompts × 3 unseen OSS repos
-    (axios/axios JS, BurntSushi/ripgrep Rust, psf/requests Python).
-    Weighted MRR 0.545 vs best lexical baseline 0.461 — +18.2%.
-    Beats every baseline aggregate, in every language.
+  - A `claude --print` A/B showed −40.9% tokens (N=36, p=5e-7). Honest caveat:
+    those are COLD-CACHE one-shots. In a warm interactive session, prompt
+    caching makes re-sent context cheap, so your dollar savings are smaller.
+    The reliable wins are: fewer first-turn tool calls, and hitting the context
+    limit / compaction later — not "−41% on your bill."
 
-  - Hook p99 latency 118ms at 10k files, 589ms at 50k (1.7× under 1s SLA).
+  - Don't trust my number — replay it on your own Claude Code history, $0, no
+    API key: `python3 python/evals/runners/replay_history.py`.
 
-The honest scope note: on repos where prompts already name the exact class
-(`PreparedRequest`, `HTTPError`), `bm25-symbols` matches us — that's the
-lexical-retrieval ceiling regime. We win the aggregate, not every repo.
+  - Hook p99 latency 118ms at 10k files, 589ms at 50k.
 
-CI-gated regression floor (9 hard gates) prevents quality drift. 18/18
-adversarial robustness cases pass.
+Honest scope: when a prompt already names the exact class (`PreparedRequest`),
+plain BM25 ties us — lexical-retrieval ceiling. And it's tuned for navigation
+("where/how does X work"), not string-replace greps.
 
 Repo: https://github.com/sravan27/context-os
 ```
