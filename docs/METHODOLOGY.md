@@ -327,12 +327,12 @@ Each fixture exercises a different `build_repo_graph.py` language pattern (Pytho
 
 | Metric | Baseline | auto_context | Δ |
 |---|---:|---:|---:|
-| Precision@3 | 0.490 | **0.583** | **+0.094** |
-| MRR | 0.562 | **0.922** | **+0.359** |
+| Precision@3 | 0.490 | **0.698** | **+0.208** |
+| MRR | 0.562 | **0.984** | **+0.422** |
 
-Per-fixture breakdown (auto_context): Python P@3 = 0.611, MRR = 0.958 · TypeScript P@3 = 0.600, MRR = 0.900 · Rust P@3 = 0.533, MRR = 0.900 · Coverage = 1.00 across all fixtures.
+Per-fixture breakdown (auto_context): Python P@3 = 0.694, MRR = 1.000 · TypeScript P@3 = 0.767, MRR = 1.000 · Rust P@3 = 0.633, MRR = 0.950 · Coverage = 1.00 across all fixtures.
 
-**Baseline** (`--baseline naive-filename`): ranks files by how many prompt tokens appear in the basename (camel-split + snake-split), tie-break shorter path. No graph, no imports, no hot-file boost. This is the trivial floor any static-RAG must beat; the +0.359 MRR lift is the graph doing real work.
+**Baseline** (`--baseline naive-filename`): ranks files by how many prompt tokens appear in the basename (camel-split + snake-split), tie-break shorter path. No graph, no imports, no hot-file boost. This is the trivial floor any static-RAG must beat; the +0.422 MRR lift is the graph doing real work.
 
 **Token-savings simulation** (`session_replay.py`): a deterministic simulator that counts tokens "burned to first relevant file" in two flows on the 32-prompt corpus:
 - **without** — 1 Glob (200 tok) + 1 Grep (500 tok) + Read files in baseline order × (line_count × 8 tok/line) until the first expected file is read.

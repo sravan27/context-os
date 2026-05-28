@@ -154,7 +154,7 @@ $ /savings
 Local-only, no phone-home. The credit per avoided search is clamped to ≤15k
 (below the 21k aggregate the live A/B measured), and sessions with nothing to
 measure fall back to a labelled 8k estimate — so the number under-claims, never
-over-claims. Correctness is CI-gated (`python3 python/evals/runners/savings_test.py`, 39 assertions).
+over-claims. Correctness is CI-gated (`python3 python/evals/runners/savings_test.py`, 49 assertions).
 
 **Don't trust my A/B — replay it on *your own* history (no API key, $0):**
 

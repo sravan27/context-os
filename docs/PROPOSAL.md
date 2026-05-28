@@ -240,7 +240,7 @@ This is the **upper bound** and should be read as one. The biggest discount is w
 | Large repos produce large graphs | File-count cap + per-file line-scan cap already in builder. Measured 50KB–2MB range. |
 | Hook adds latency on every prompt | Measured 50ms. Env-toggleable (`CONTEXT_OS_AUTOCONTEXT=0`). |
 | Graph goes stale and misleads Claude | `prewarm` detects staleness (`>7d` or `>20` changed source files) and auto-rebuilds in background. Manual `/rebuild-graph` also provided. |
-| False positives (wrong file in top-3) | Honest: P@3 = 0.604, so ~40% of top-3 files are wrong. MRR 0.938 means the top-1 is usually correct, which is what Claude actually acts on. Hub-file + test-file penalties tuned for this. |
+| False positives (wrong file in top-3) | Honest: synthetic P@3 = 0.698, so ~30% of top-3 files are wrong on a mixed prompt set. MRR 0.984 means the top-1 is usually correct, which is what Claude actually acts on first. Hub-file + test-file penalties tuned for this. |
 | User confusion if block appears in output | Block is in a `<context-os:autocontext>` tag; Claude Code renders it invisibly (hook contract). |
 
 ---

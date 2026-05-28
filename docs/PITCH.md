@@ -71,7 +71,7 @@ All reports live in `python/evals/reports/`, regenerated on every PR:
 - **+0.109 MRR** over BM25-symbols · **+0.422** over naive-filename
 
 **Dogfood on this repo** (`dogfood-eval.md`, 15 real-developer prompts, 50 files):
-- MRR **0.756** · top-1 **0.600** · P@3 0.322
+- MRR **0.756** · top-1 **0.600** · P@3 0.311
 - **beats every lexical baseline** on real-repo prompts (+0.142 over BM25-symbols, +0.231 over BM25-path, +0.484 over grep-count)
 
 **Cross-repo generalization** (`multi-repo-eval.md`, 36 prompts × 3 unseen OSS repos):
