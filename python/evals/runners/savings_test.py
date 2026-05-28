@@ -33,6 +33,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 TRACKER = os.path.join(REPO, "hooks", "python", "savings_tracker.py")
 REPORT = os.path.join(REPO, "python", "scripts", "savings_report.py")
 SMART_READ = os.path.join(REPO, "hooks", "python", "smart_read.py")
+SMART_BASH = os.path.join(REPO, "hooks", "python", "smart_bash.py")
 
 _fails = []
 _base = datetime(2026, 5, 26, 12, 0, 0)
@@ -423,6 +424,165 @@ def test_occupancy_compounding():
               50000 <= bf <= 120000)
 
 
+def _run_smart_bash(payload, env=None):
+    e = dict(os.environ)
+    if env:
+        e.update(env)
+    return subprocess.run([sys.executable, SMART_BASH],
+                          input=json.dumps(payload), capture_output=True,
+                          text=True, env=e)
+
+
+def test_smart_bash_parser_strict_whitelist():
+    """The parser MUST allow through anything ambiguous. False interceptions
+    break real Bash work — these are the dangerous false-positive shapes."""
+    sys.path.insert(0, os.path.join(REPO, "hooks", "python"))
+    import smart_bash as sb
+    # SHOULD INTERCEPT — only whole-file dumpers. head/tail default to 10
+    # lines so their dump is smaller than the outline; deliberately excluded.
+    accepts = {
+        "cat foo.py": "foo.py",
+        "less x.md": "x.md",
+        "bat src/main.rs": "src/main.rs",
+        "more notes.md": "notes.md",
+    }
+    for cmd, expected in accepts.items():
+        check(f"parser ACCEPT: `{cmd}`", sb.parse_pure_dump(cmd) == expected)
+    # MUST PASS THROUGH (returns None — too risky to touch)
+    rejects = [
+        "head bar.py",                       # head/tail not intercepted (10-line default)
+        "head -50 baz.py",
+        "head -n 50 baz.py",
+        "tail file.txt",
+        "tail -100 log.txt",
+        "",                                  # empty
+        "   ",                               # whitespace
+        "cat",                               # no arg
+        "cat foo.py bar.py",                 # multiple files
+        "cat foo.py | grep x",               # pipe
+        "cat foo.py > out.txt",              # redirect
+        "cat < foo.py",                      # input redirect
+        "cat foo.py && ls",                  # command chain
+        "cat foo.py; ls",                    # semicolon
+        "cat foo.py || true",                # OR chain
+        "echo foo",                          # not a view cmd
+        "grep pattern foo.py",               # grep (search, not dump)
+        "ls foo.py",                         # not a view cmd
+        "cat $FILE",                         # variable
+        "cat $(echo foo.py)",                # command substitution
+        "cat `echo foo.py`",                 # backtick substitution
+        "cat *.py",                          # glob
+        "cat foo[1].py",                     # bracket glob
+        "cat ~/foo.py",                      # tilde expansion
+        "cat 'foo bar.py'",                  # quotes
+        'cat "foo.py"',                      # double quotes
+        "cat foo.py # comment",              # comment
+        "cat foo.py\\",                      # line continuation
+        "cat -n foo.py",                     # unsupported flag
+        "head -X foo.py",                    # unknown numeric flag
+        "head -n abc foo.py",                # non-numeric N
+        "head -n 50 -v foo.py",              # extra flag
+        "python cat.py",                     # not actually cat
+        "/bin/cat foo.py",                   # path-qualified cat (we don't track)
+    ]
+    for cmd in rejects:
+        check(f"parser PASS-THROUGH: `{cmd[:40]}`",
+              sb.parse_pure_dump(cmd) is None)
+
+
+def test_smart_bash_intercepts_big_indexed_dump():
+    root = tempfile.mkdtemp(prefix="cos-sb1-")
+    rel = "pkg/big.py"
+    fp = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(fp))
+    open(fp, "w").write("\n".join(f"line {i}" for i in range(900)))
+    _mk_graph(root, rel, 900, 12)
+    state = os.path.expanduser("~/.context-os/state/smartread-sbsess1.json")
+    if os.path.exists(state):
+        os.remove(state)
+    # `cat <bigfile>` — pure dump → intercepted
+    r = _run_smart_bash({"tool_name": "Bash",
+                         "tool_input": {"command": f"cat {fp}"},
+                         "cwd": root, "session_id": "sbsess1"})
+    check("smart_bash: pure `cat <big>` intercepted (exit 2)",
+          r.returncode == 2)
+    check("smart_bash: outline + 'Read tool, not a Bash dump' guidance",
+          "L1-" in r.stderr and "Read tool" in r.stderr)
+    # logs a slice marked via=bash
+    sl = os.path.join(root, ".context-os", "savings", "slices.jsonl")
+    if os.path.exists(sl):
+        last = json.loads(open(sl).read().splitlines()[-1])
+        check("smart_bash: slice logged with via=bash",
+              last.get("via") == "bash" and last.get("saved", 0) > 0)
+    # dedupe shared with smart_read: second cat allowed
+    r2 = _run_smart_bash({"tool_name": "Bash",
+                          "tool_input": {"command": f"cat {fp}"},
+                          "cwd": root, "session_id": "sbsess1"})
+    check("smart_bash: same file allowed second time (no nag)",
+          r2.returncode == 0)
+    if os.path.exists(state):
+        os.remove(state)
+
+
+def test_smart_bash_allows_complex_commands():
+    """The dangerous direction: NEVER block legitimate complex Bash."""
+    root = tempfile.mkdtemp(prefix="cos-sb2-")
+    rel = "pkg/big.py"
+    fp = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(fp))
+    open(fp, "w").write("\n".join(f"line {i}" for i in range(900)))
+    _mk_graph(root, rel, 900, 12)
+    risky_but_legitimate = [
+        f"cat {fp} | grep x",                   # piped
+        f"cat {fp} > /tmp/out.txt",             # redirected
+        f"cat {fp} && echo done",               # chained
+        f"head {fp} | wc -l",                   # piped
+        f"grep pattern {fp}",                   # grep is allowed
+        f"wc -l {fp}",                          # not a view cmd
+        f"python -c 'open(\"{fp}\")'",          # quoted, complex
+        f"ls {fp}",                             # not a view cmd
+    ]
+    for cmd in risky_but_legitimate:
+        r = _run_smart_bash({"tool_name": "Bash",
+                             "tool_input": {"command": cmd},
+                             "cwd": root, "session_id": f"sb-{hash(cmd)}"})
+        check(f"smart_bash: ALLOWS complex `{cmd[:40]}…`", r.returncode == 0)
+
+
+def test_smart_bash_disable_and_edge_cases():
+    root = tempfile.mkdtemp(prefix="cos-sb3-")
+    rel = "pkg/big.py"
+    fp = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(fp))
+    open(fp, "w").write("\n".join(f"line {i}" for i in range(900)))
+    _mk_graph(root, rel, 900, 12)
+    # disabled → allow
+    r = _run_smart_bash({"tool_name": "Bash",
+                         "tool_input": {"command": f"cat {fp}"},
+                         "cwd": root, "session_id": "sbd1"},
+                        env={"CONTEXT_OS_SMART_BASH": "0"})
+    check("smart_bash: CONTEXT_OS_SMART_BASH=0 disables", r.returncode == 0)
+    # non-existent file → allow
+    r2 = _run_smart_bash({"tool_name": "Bash",
+                          "tool_input": {"command": "cat /no/such/file.py"},
+                          "cwd": root, "session_id": "sbd2"})
+    check("smart_bash: non-existent file allowed", r2.returncode == 0)
+    # small file (below threshold) → allow
+    small = os.path.join(root, "small.py")
+    open(small, "w").write("a\n" * 50)
+    _mk_graph(root, "small.py", 50, 5)
+    r3 = _run_smart_bash({"tool_name": "Bash",
+                          "tool_input": {"command": f"cat {small}"},
+                          "cwd": root, "session_id": "sbd3"})
+    check("smart_bash: small file allowed (under threshold)",
+          r3.returncode == 0)
+    # not a Bash tool_use at all → allow
+    r4 = _run_smart_bash({"tool_name": "Read",
+                          "tool_input": {"file_path": fp},
+                          "cwd": root, "session_id": "sbd4"})
+    check("smart_bash: non-Bash tool ignored", r4.returncode == 0)
+
+
 def test_slices_feed_receipts():
     root = tempfile.mkdtemp(prefix="cos-sr3-")
     sav = os.path.join(root, ".context-os", "savings")
@@ -456,6 +616,10 @@ def main():
     test_report_surfaces_measurement()
     test_smart_read_offers_outline()
     test_smart_read_passthrough()
+    test_smart_bash_parser_strict_whitelist()
+    test_smart_bash_intercepts_big_indexed_dump()
+    test_smart_bash_allows_complex_commands()
+    test_smart_bash_disable_and_edge_cases()
     test_basename_collision_not_overcounted()
     test_prune_log_caps_unbounded_growth()
     test_occupancy_compounding()

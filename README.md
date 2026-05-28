@@ -194,7 +194,7 @@ python3 python/evals/runners/multi_repo_eval.py  # cross-repo eval, ~2 min
 
 ## What it installs
 
-`setup.sh` writes 30 techniques across `CLAUDE.md`, `.claudeignore`, `.claude/settings.json`, thirteen slash commands, an output style, a Haiku explorer subagent, and eight stdlib-Python hooks under `.claude/hooks/`. Full list with evidence per row: [`docs/TECHNIQUES.md`](docs/TECHNIQUES.md).
+`setup.sh` writes 31 techniques across `CLAUDE.md`, `.claudeignore`, `.claude/settings.json`, thirteen slash commands, an output style, a Haiku explorer subagent, and nine stdlib-Python hooks under `.claude/hooks/`. Full list with evidence per row: [`docs/TECHNIQUES.md`](docs/TECHNIQUES.md).
 
 Three hooks are the heart of it, all backed by one graph: **`auto_context.py`** (UserPromptSubmit — retrieval, skip first-turn exploration), **`smart_read.py`** (PreToolUse — structural slicing, read the slice not the file), and **`savings_tracker.py`** (Stop — measure both, causally) surfaced via `/savings`. All hooks fail-open — if they break, your session keeps going.
 
