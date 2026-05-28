@@ -1538,60 +1538,116 @@ chmod +x "$HOOK_DIR/dedup_guard.py"
 # --- loop_guard.py --------------------------------------------------
 cat > "$HOOK_DIR/loop_guard.py" <<'CONTEXT_OS_LOOP_EOF'
 #!/usr/bin/env python3
-"""PreToolUse hook: detects Read/Edit loops and nudges Claude to step back."""
-import json, os, sys, time
+"""
+loop_guard.py — PreToolUse hook that detects Read/Edit loops on the same file
+and nudges Claude to step back instead of grinding.
+
+Problem: A common failure mode is Claude editing the same file 5-10 times in
+a row — test fails, read it again, edit, test fails, read, edit, ... The
+symptom is a stuck loop burning tokens with no forward progress. Anthropic
+has seen this in their telemetry (mentioned in the Claude Code best-practices
+post). Users waste minutes + thousands of tokens before they notice.
+
+Solution: Count Edit/Write calls per file per session. At THRESHOLD (default 5),
+emit a non-blocking warning via stderr. At HARD_LIMIT (default 8), block with
+exit 2 and tell Claude to stop and ask the user.
+
+Output: stderr messages are visible to Claude; Claude can course-correct.
+
+Zero dependencies (stdlib only). Runs in <10ms.
+"""
+import json
+import os
+import sys
+import time
 from pathlib import Path
 
-WARN = int(os.environ.get("CONTEXT_OS_LOOP_WARN", "5"))
-HARD = int(os.environ.get("CONTEXT_OS_LOOP_HARD", "8"))
-WINDOW = 1800
+def _int_env(name, default):
+    """Parse an int env var without ever raising — a malformed value must not
+    crash the hook (module-level int() runs before main's try/except)."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+WARN_THRESHOLD = _int_env("CONTEXT_OS_LOOP_WARN", 5)
+HARD_LIMIT = _int_env("CONTEXT_OS_LOOP_HARD", 8)
+WINDOW_SECONDS = 1800  # 30-min window — loops beyond this are probably new work
 STATE_DIR = Path.home() / ".context-os" / "state"
 
-def main():
+
+def main() -> int:
     if os.environ.get("CONTEXT_OS_LOOP_GUARD") == "0":
         return 0
+
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
         return 0
+
     tool_name = payload.get("tool_name", "")
     if tool_name not in ("Edit", "Write", "NotebookEdit"):
         return 0
+
     tool_input = payload.get("tool_input") or {}
-    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    file_path = (
+        tool_input.get("file_path")
+        or tool_input.get("notebook_path")
+        or ""
+    )
     if not file_path:
         return 0
+
     session_id = payload.get("session_id", "default")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     state_file = STATE_DIR / f"loop-{session_id}.json"
     now = time.time()
+
     try:
         state = json.loads(state_file.read_text()) if state_file.exists() else {}
     except (OSError, json.JSONDecodeError):
         state = {}
+
     entry = state.get(file_path, {"count": 0, "first": now, "last": now})
-    if now - entry.get("last", now) > WINDOW:
+    # Reset counter if previous edit was outside the window.
+    if now - entry.get("last", now) > WINDOW_SECONDS:
         entry = {"count": 0, "first": now, "last": now}
+
     entry["count"] += 1
     entry["last"] = now
     state[file_path] = entry
+
     try:
         state_file.write_text(json.dumps(state))
     except OSError:
         pass
+
     count = entry["count"]
-    short = os.path.relpath(file_path) if os.path.isabs(file_path) else file_path
-    if count >= HARD:
-        print(f"[context-os] STOP — edited {short} {count} times. "
-              f"Almost certainly a loop. Ask the user before another edit. "
-              f"Try: re-reading the full file, running tests for real errors, "
-              f"or a different approach.", file=sys.stderr)
-        return 2
-    if count == WARN:
-        print(f"[context-os] Heads up: edit #{count} on {short}. "
-              f"If tests still fail, step back and re-read before editing again.",
-              file=sys.stderr)
+    short_path = os.path.relpath(file_path) if os.path.isabs(file_path) else file_path
+
+    if count >= HARD_LIMIT:
+        msg = (
+            f"[context-os] STOP — edited {short_path} {count} times in this session. "
+            f"This is almost certainly a loop. Ask the user before another edit. "
+            f"Consider: reading the surrounding code, running tests to see real errors, "
+            f"or trying a different approach entirely."
+        )
+        print(msg, file=sys.stderr)
+        return 2  # Block — force a pause.
+
+    if count == WARN_THRESHOLD:
+        msg = (
+            f"[context-os] Heads up: this is edit #{count} on {short_path}. "
+            f"If the tests/builds still fail, step back and re-read the full file "
+            f"before editing again — don't grind."
+        )
+        print(msg, file=sys.stderr)
+        # Non-blocking warning.
+        return 0
+
     return 0
+
 
 if __name__ == "__main__":
     try:
@@ -2570,16 +2626,18 @@ def _abspath(p, cwd):
         return p
 
 
-def _file_match(target_abs, candidate_set, candidate_suffixes):
-    """target opened by Claude; candidate_set = suggested files (abspaths)."""
+def _file_match(target_abs, candidate_set, candidate_suffixes=None):
+    """target opened by Claude; candidate_set = suggested files (abspaths).
+    Exact or full-path-suffix match only — NO bare-basename fallback, which
+    would over-count on common names (mod.rs, __init__.py, index.ts) that
+    collide across directories. Under-claim > over-claim."""
     if target_abs in candidate_set:
         return True
     tail = target_abs.lstrip("/")
     for c in candidate_set:
         if c.endswith("/" + tail) or tail.endswith("/" + c.lstrip("/")):
             return True
-    base = os.path.basename(target_abs)
-    return bool(base and "/" in target_abs and base in candidate_suffixes)
+    return False
 
 
 def parse_transcript(path):
@@ -2704,7 +2762,6 @@ def analyze(episodes, sugg_items, sugg_union):
     """
     have_ts = any(s[0] is not None for s in sugg_items) and \
         any(e["prompt_ts"] is not None for e in episodes)
-    sugg_suffixes = {os.path.basename(a) for (_, a) in sugg_items}
 
     # episode end bounds (next prompt ts) for cumulative suggestion windows
     prompt_idx = [i for i, e in enumerate(episodes) if e["prompt_ts"] is not None]
@@ -2744,7 +2801,7 @@ def analyze(episodes, sugg_items, sugg_union):
                     if ts is None or ts < bound}
         else:
             cand = set(sugg_union)
-        if _file_match(first_file, cand, sugg_suffixes):
+        if _file_match(first_file, cand):
             assisted += 1
 
     soft_hits = len(sugg_union & all_read_files) if sugg_union else 0
@@ -2786,6 +2843,24 @@ def read_slices(savings_dir, session_id):
     return saved, n, by_file
 
 
+def _prune_log(path, keep=10000, trigger=20000):
+    """Bound unbounded growth of suggestions.jsonl / slices.jsonl. If the file
+    exceeds `trigger` lines, rewrite with the most recent `keep`. Runs at Stop
+    (not hot). Best-effort, never raises. Keeps the tail (recent first) so the
+    current session's records survive."""
+    try:
+        if not path.exists():
+            return
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        if len(lines) <= trigger:
+            return
+        with path.open("w", encoding="utf-8") as f:
+            f.writelines(lines[-keep:])
+    except OSError:
+        pass
+
+
 def compute_occupancy(transcript, by_file, cap):
     """The compounding win, measured from the real transcript: a sliced file's
     body would have been re-sent on every turn until compaction. For each
@@ -2823,8 +2898,9 @@ def compute_occupancy(transcript, by_file, cap):
                     if rel in first_turn:
                         continue
                     r = rel.replace(os.sep, "/")
-                    if fp.endswith("/" + r) or fp == r or \
-                            os.path.basename(fp) == os.path.basename(r):
+                    # full-path-suffix match only (rel logged by smart_read vs
+                    # abspath in transcript); no bare-basename fallback.
+                    if fp == r or fp.endswith("/" + r) or r.endswith("/" + fp.lstrip("/")):
                         first_turn[rel] = turns
     occ = 0
     for rel, tn in first_turn.items():
@@ -2997,6 +3073,9 @@ def main():
             f"context-os. Share your card: /savings ***",
             file=sys.stderr,
         )
+    # Bound unbounded log growth (Stop is not hot).
+    _prune_log(savings_dir / "suggestions.jsonl")
+    _prune_log(savings_dir / "slices.jsonl")
     return 0
 
 

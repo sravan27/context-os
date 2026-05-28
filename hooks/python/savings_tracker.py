@@ -71,16 +71,18 @@ def _abspath(p, cwd):
         return p
 
 
-def _file_match(target_abs, candidate_set, candidate_suffixes):
-    """target opened by Claude; candidate_set = suggested files (abspaths)."""
+def _file_match(target_abs, candidate_set, candidate_suffixes=None):
+    """target opened by Claude; candidate_set = suggested files (abspaths).
+    Exact or full-path-suffix match only — NO bare-basename fallback, which
+    would over-count on common names (mod.rs, __init__.py, index.ts) that
+    collide across directories. Under-claim > over-claim."""
     if target_abs in candidate_set:
         return True
     tail = target_abs.lstrip("/")
     for c in candidate_set:
         if c.endswith("/" + tail) or tail.endswith("/" + c.lstrip("/")):
             return True
-    base = os.path.basename(target_abs)
-    return bool(base and "/" in target_abs and base in candidate_suffixes)
+    return False
 
 
 def parse_transcript(path):
@@ -205,7 +207,6 @@ def analyze(episodes, sugg_items, sugg_union):
     """
     have_ts = any(s[0] is not None for s in sugg_items) and \
         any(e["prompt_ts"] is not None for e in episodes)
-    sugg_suffixes = {os.path.basename(a) for (_, a) in sugg_items}
 
     # episode end bounds (next prompt ts) for cumulative suggestion windows
     prompt_idx = [i for i, e in enumerate(episodes) if e["prompt_ts"] is not None]
@@ -245,7 +246,7 @@ def analyze(episodes, sugg_items, sugg_union):
                     if ts is None or ts < bound}
         else:
             cand = set(sugg_union)
-        if _file_match(first_file, cand, sugg_suffixes):
+        if _file_match(first_file, cand):
             assisted += 1
 
     soft_hits = len(sugg_union & all_read_files) if sugg_union else 0
@@ -287,6 +288,24 @@ def read_slices(savings_dir, session_id):
     return saved, n, by_file
 
 
+def _prune_log(path, keep=10000, trigger=20000):
+    """Bound unbounded growth of suggestions.jsonl / slices.jsonl. If the file
+    exceeds `trigger` lines, rewrite with the most recent `keep`. Runs at Stop
+    (not hot). Best-effort, never raises. Keeps the tail (recent first) so the
+    current session's records survive."""
+    try:
+        if not path.exists():
+            return
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        if len(lines) <= trigger:
+            return
+        with path.open("w", encoding="utf-8") as f:
+            f.writelines(lines[-keep:])
+    except OSError:
+        pass
+
+
 def compute_occupancy(transcript, by_file, cap):
     """The compounding win, measured from the real transcript: a sliced file's
     body would have been re-sent on every turn until compaction. For each
@@ -324,8 +343,9 @@ def compute_occupancy(transcript, by_file, cap):
                     if rel in first_turn:
                         continue
                     r = rel.replace(os.sep, "/")
-                    if fp.endswith("/" + r) or fp == r or \
-                            os.path.basename(fp) == os.path.basename(r):
+                    # full-path-suffix match only (rel logged by smart_read vs
+                    # abspath in transcript); no bare-basename fallback.
+                    if fp == r or fp.endswith("/" + r) or r.endswith("/" + fp.lstrip("/")):
                         first_turn[rel] = turns
     occ = 0
     for rel, tn in first_turn.items():
@@ -498,6 +518,9 @@ def main():
             f"context-os. Share your card: /savings ***",
             file=sys.stderr,
         )
+    # Bound unbounded log growth (Stop is not hot).
+    _prune_log(savings_dir / "suggestions.jsonl")
+    _prune_log(savings_dir / "slices.jsonl")
     return 0
 
 

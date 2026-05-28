@@ -23,8 +23,17 @@ import sys
 import time
 from pathlib import Path
 
-WARN_THRESHOLD = int(os.environ.get("CONTEXT_OS_LOOP_WARN", "5"))
-HARD_LIMIT = int(os.environ.get("CONTEXT_OS_LOOP_HARD", "8"))
+def _int_env(name, default):
+    """Parse an int env var without ever raising — a malformed value must not
+    crash the hook (module-level int() runs before main's try/except)."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+WARN_THRESHOLD = _int_env("CONTEXT_OS_LOOP_WARN", 5)
+HARD_LIMIT = _int_env("CONTEXT_OS_LOOP_HARD", 8)
 WINDOW_SECONDS = 1800  # 30-min window — loops beyond this are probably new work
 STATE_DIR = Path.home() / ".context-os" / "state"
 

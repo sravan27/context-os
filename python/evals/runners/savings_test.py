@@ -359,6 +359,43 @@ def test_smart_read_passthrough():
     check("smart_read: CONTEXT_OS_SMART_READ=0 disables (exit 0)", r3.returncode == 0)
 
 
+def test_basename_collision_not_overcounted():
+    """Hardening: reading a file whose basename matches a suggested file but
+    lives in a DIFFERENT directory must NOT be credited as a hit. The old
+    bare-basename fallback over-counted on common names (mod.rs, __init__.py,
+    index.ts) that collide across dirs."""
+    root = tempfile.mkdtemp(prefix="cos-bc-")
+    setup_session(root, "bc", ["pkg/a/foo.py"])
+    tp = os.path.join(root, "t.jsonl")
+    write_transcript(tp, [
+        ("where is foo", [("Read", os.path.join(root, "other/dir/foo.py"), 200)]),
+    ])
+    run_tracker({"transcript_path": tp, "session_id": "bc", "cwd": root})
+    rows = ledger_rows(root)
+    check("basename-collision: unrelated foo.py NOT credited as hit", bool(rows))
+    if rows:
+        check("basename-collision: hits == 0 (under-claim wins over over-claim)",
+              rows[0]["hits"] == 0)
+
+
+def test_prune_log_caps_unbounded_growth():
+    """Hardening: suggestions.jsonl / slices.jsonl must not grow forever.
+    Tracker prunes to last 10k lines when file exceeds 20k."""
+    root = tempfile.mkdtemp(prefix="cos-pr-")
+    sav = os.path.join(root, ".context-os", "savings")
+    os.makedirs(sav)
+    f = os.path.join(sav, "suggestions.jsonl")
+    with open(f, "w") as fh:
+        for i in range(25_000):
+            fh.write(json.dumps({"ts": float(i), "session": "pr",
+                                 "files": ["a.py"]}) + "\n")
+    tp = os.path.join(root, "t.jsonl")
+    write_transcript(tp, [("hi", [("Read", os.path.join(root, "a.py"), 100)])])
+    run_tracker({"transcript_path": tp, "session_id": "pr", "cwd": root})
+    n_after = sum(1 for _ in open(f))
+    check("prune: 25k-line suggestions.jsonl capped at 10k (keep)", n_after == 10_000)
+
+
 def test_occupancy_compounding():
     """smart_read's compounding win: a sliced file read early persists across
     the turns that follow → budget_freed = saved × remaining turns (capped)."""
@@ -419,6 +456,8 @@ def main():
     test_report_surfaces_measurement()
     test_smart_read_offers_outline()
     test_smart_read_passthrough()
+    test_basename_collision_not_overcounted()
+    test_prune_log_caps_unbounded_growth()
     test_occupancy_compounding()
     test_slices_feed_receipts()
     print()
