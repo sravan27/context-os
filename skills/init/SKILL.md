@@ -1,6 +1,6 @@
 ---
 description: Initialize context-os in the current project by building the local repo graph and installing Claude Code guidance.
-argument-hint: [--global]
+argument-hint: "[--global]"
 allowed-tools: [Bash]
 disable-model-invocation: true
 ---
